@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  /* REMOVED smooth scroll to prevent conflicts */
+  scroll-padding-top: 0;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+  /* REMOVED smooth scroll to prevent conflicts */
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+  scrollbar-gutter: stable;
+}
+
+body {
+  /* Prevent scroll jumping and layout shifts */
+  scrollbar-gutter: stable;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* REMOVED contain to prevent buffering */
+}
+
+/* Optimize all animated elements - SIMPLIFIED */
+[class*="animate-"] {
+  /* REMOVED excessive optimizations that cause buffering */
+  backface-visibility: hidden;
+}
+
+/* Prevent layout shifts from absolute positioned elements - SIMPLIFIED */
+.absolute {
+  /* REMOVED contain to prevent buffering */
+}
+
+/* Optimize backdrop blur elements - SIMPLIFIED */
+.backdrop-blur-xl {
+  /* REMOVED will-change to prevent buffering */
+}
+
+/* Prevent layout shifts from hover effects - SIMPLIFIED */
+.group:hover .group-hover\:scale-110,
+.hover\:scale-105:hover {
+  /* REMOVED excessive transforms to prevent buffering */
+}
+
+/* Fix for transition elements - SIMPLIFIED */
+.transition-all,
+.transition-transform {
+  /* REMOVED will-change to prevent buffering */
+  backface-visibility: hidden;
+}
+
+/* Prevent reflow from dynamic content */
+.min-h-screen {
+  min-height: 100vh;
+  min-height: 100dvh; /* Dynamic viewport height for mobile */
+}
+
+/* Force GPU acceleration for main containers - SIMPLIFIED */
+#root {
+  /* REMOVED will-change to prevent buffering */
+}
+
+/* Prevent layout shifts during scroll */
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Optimize scroll performance - SIMPLIFIED */
+html {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: none;
+  overscroll-behavior-x: none;
+}
+
+body {
+  overscroll-behavior-y: none;
+  overscroll-behavior-x: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Cyber-themed scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0f172a;
+  border-left: 1px solid #334155;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #06b6d4, #3b82f6);
+  border-radius: 5px;
+  border: 2px solid #0f172a;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #22d3ee, #60a5fa);
+}
+
+
+
+
