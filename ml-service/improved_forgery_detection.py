@@ -351,3 +351,4 @@ def analyze_forgery_improved(image: Image.Image) -> Tuple[float, str, float, boo
     return forgery_score, verdict, confidence, is_edited, edit_confidence, edit_indicators
 
 
+

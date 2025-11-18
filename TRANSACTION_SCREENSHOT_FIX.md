@@ -258,3 +258,4 @@ high_threshold = 35  # Was: 50 if is_likely_screenshot else 35
 **Priority:** 🔴 CRITICAL - Affects core functionality
 
 
+
