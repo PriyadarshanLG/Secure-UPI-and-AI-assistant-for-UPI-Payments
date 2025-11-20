@@ -623,9 +623,6 @@ const Landing = () => {
                   <Link to="/sms/check" className={`block text-xs font-mono hover:underline transition-all ${isDark ? 'text-slate-400 hover:text-cyan-400' : 'text-gray-700 hover:text-cyan-700'}`}>
                     {'>'} SMS Analyzer
                   </Link>
-                  <Link to="/deepfake/detect" className={`block text-xs font-mono hover:underline transition-all ${isDark ? 'text-slate-400 hover:text-cyan-400' : 'text-gray-700 hover:text-cyan-700'}`}>
-                    {'>'} Deepfake Detector
-                  </Link>
                   <Link to="/voice/detect" className={`block text-xs font-mono hover:underline transition-all ${isDark ? 'text-slate-400 hover:text-cyan-400' : 'text-gray-700 hover:text-cyan-700'}`}>
                     {'>'} Voice Analyzer
                   </Link>

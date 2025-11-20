@@ -143,7 +143,7 @@ const Profile = () => {
                   <h4 className="text-lg font-bold text-blue-300 mb-2 font-mono">[DEMO_MODE_ACTIVE]</h4>
                   <p className="text-sm text-blue-200 font-mono leading-relaxed">
                     This is a demonstration account. Profile editing is disabled for this demo.
-                    Focus on testing the main fraud detection features including evidence upload, deepfake detection, and transaction analysis.
+                    Focus on testing the main fraud detection features including evidence upload and transaction analysis.
                   </p>
                 </div>
               </div>
@@ -164,18 +164,6 @@ const Profile = () => {
                 <div className="absolute inset-0 bg-gradient-to-r from-cyan-600 to-blue-700 opacity-0 group-hover:opacity-100 transition-opacity"></div>
               </Link>
 
-              <Link
-                to="/deepfake"
-                className="flex-1 inline-flex items-center justify-center px-6 py-4 bg-gradient-to-r from-purple-500 to-pink-600 text-white font-bold font-mono rounded-lg hover:shadow-2xl hover:shadow-purple-500/50 transition-all border-2 border-purple-400/50 group relative overflow-hidden"
-              >
-                <span className="relative z-10 flex items-center space-x-2">
-                  <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
-                  </svg>
-                  <span>[DEEPFAKE_DETECTOR]</span>
-                </span>
-                <div className="absolute inset-0 bg-gradient-to-r from-purple-600 to-pink-700 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-              </Link>
             </div>
           </div>
         </div>

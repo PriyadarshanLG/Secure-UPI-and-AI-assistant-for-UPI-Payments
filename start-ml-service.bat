@@ -6,27 +6,46 @@ echo.
 
 cd ml-service
 
+set "PREFERRED_PY_VERSION=3.11"
+set "PYTHON_CMD="
+
 echo Checking Python installation...
-REM Try py first (Windows Python Launcher), then python, then python3
-py --version >nul 2>&1
+echo Looking for Python %PREFERRED_PY_VERSION% ...
+
+REM Try Python launcher with explicit version pin first
+py -%PREFERRED_PY_VERSION% --version >nul 2>&1
 if errorlevel 1 (
+    REM Fallback to python and python3, but ensure they match 3.11.x
     python --version >nul 2>&1
-    if errorlevel 1 (
-        python3 --version >nul 2>&1
-        if errorlevel 1 (
-            echo ERROR: Python is not installed or not in PATH
-            echo Please install Python 3.8+ from https://www.python.org/
-            echo Make sure to check "Add Python to PATH" during installation
-            pause
-            exit /b 1
-        ) else (
-            set PYTHON_CMD=python3
+    if not errorlevel 1 (
+        python -c "import sys; exit(0 if sys.version_info[:2]==(3,11) else 1)" >nul 2>&1
+        if not errorlevel 1 (
+            set PYTHON_CMD=python
         )
-    ) else (
-        set PYTHON_CMD=python
+    )
+    if "%PYTHON_CMD%"=="" (
+        python3 --version >nul 2>&1
+        if not errorlevel 1 (
+            python3 -c "import sys; exit(0 if sys.version_info[:2]==(3,11) else 1)" >nul 2>&1
+            if not errorlevel 1 (
+                set PYTHON_CMD=python3
+            )
+        )
     )
 ) else (
-    set PYTHON_CMD=py
+    set "PYTHON_CMD=py -%PREFERRED_PY_VERSION%"
+)
+
+if "%PYTHON_CMD%"=="" (
+    echo ERROR: Could not find a Python %PREFERRED_PY_VERSION%.x interpreter.
+    echo.
+    echo Please install Python %PREFERRED_PY_VERSION%.x from https://www.python.org/downloads/windows/
+    echo and ensure it is added to PATH or accessible via the Python Launcher.
+    echo.
+    echo Tip: Re-run "py -0p" to confirm that 3.11 appears, or reinstall with
+    echo the "Add to PATH" checkbox enabled.
+    pause
+    exit /b 1
 )
 
 echo Using Python command: %PYTHON_CMD%
@@ -38,7 +57,7 @@ echo Checking required packages...
 if errorlevel 1 (
     echo Some packages are missing. Installing...
     echo.
-    echo IMPORTANT: OpenCV (cv2) is required for deepfake detection!
+    echo IMPORTANT: OpenCV ^(cv2^) is required for deepfake detection!
     echo Installing all dependencies from requirements.txt...
     echo.
     %PYTHON_CMD% -m pip install -r requirements.txt
@@ -46,7 +65,7 @@ if errorlevel 1 (
         echo.
         echo ERROR: Failed to install packages
         echo.
-        echo Trying with --user flag (no admin required)...
+        echo Trying with --user flag ^(no admin required^)...
         %PYTHON_CMD% -m pip install --user -r requirements.txt
         if errorlevel 1 (
             echo.

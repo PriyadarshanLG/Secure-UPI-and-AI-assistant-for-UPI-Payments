@@ -65,104 +65,121 @@ async function checkMLServiceHealth(maxRetries = 3) {
  * Performs simple file-based checks and pattern detection
  */
 function basicVoiceAnalysis(file) {
+  // Collect qualitative reasoning so the frontend can explain why a score was chosen
   const indicators = [];
   const spamIndicators = [];
+  const positiveSignals = [];
   let deepfakeScore = 0.0;
   const detectionMethods = ['Basic File Analysis', 'Metadata Check', 'Pattern Detection'];
-  
+
+  // Helper to add risk with a consistent structure
+  const addRisk = (score, message, bucket = indicators) => {
+    bucket.push(message);
+    deepfakeScore += score;
+  };
+
   // File size analysis
   const fileSizeMB = file.size / (1024 * 1024);
-  if (fileSizeMB < 0.01) {
-    indicators.push('Very small file size - may be incomplete or corrupted');
-    deepfakeScore += 10;
-  } else if (fileSizeMB > 10) {
-    indicators.push('Very large file size - may contain multiple segments');
-    deepfakeScore += 5;
+  if (fileSizeMB < 0.005) {
+    addRisk(25, 'Tiny audio file - often associated with test or synthetic clips');
+  } else if (fileSizeMB < 0.02) {
+    addRisk(8, 'Very small audio payload - limited speech evidence');
+  } else if (fileSizeMB > 20) {
+    addRisk(10, 'Very large audio - may contain stitched content');
+  } else {
+    positiveSignals.push('File size looks typical for short voice samples');
   }
-  
-  // File type analysis
+
+  // File type / name analysis
   const mimeType = file.mimetype;
   const fileName = file.originalname.toLowerCase();
-  
-  // Check for suspicious file extensions or names
+  const fileExt = fileName.split('.').pop();
+
   const suspiciousPatterns = ['ai_voice', 'deepfake', 'synthetic', 'generated', 'fake', 'test_voice'];
   for (const pattern of suspiciousPatterns) {
     if (fileName.includes(pattern)) {
-      indicators.push(`Suspicious filename pattern detected: "${pattern}"`);
-      deepfakeScore += 15;
+      addRisk(30, `Suspicious filename pattern detected: "${pattern}"`);
     }
   }
-  
-  // Check file format
+
+  const spamPatterns = ['spam', 'robocall', 'automated', 'telemarketer', 'scam'];
+  for (const pattern of spamPatterns) {
+    if (fileName.includes(pattern)) {
+      addRisk(35, `Filename suggests spam: "${pattern}"`, spamIndicators);
+    }
+  }
+
   const compressedFormats = ['mp3', 'aac', 'm4a', 'ogg'];
   const uncompressedFormats = ['wav', 'flac'];
-  const fileExt = fileName.split('.').pop();
-  
   if (compressedFormats.includes(fileExt)) {
-    // Compressed formats can hide artifacts, but also common for real audio
-    // Lower weight
-    deepfakeScore += 5;
+    // Compressed audio is common, so apply only a mild penalty
+    addRisk(3, 'Compressed audio format - may hide artifacts but is common');
+  } else if (uncompressedFormats.includes(fileExt)) {
+    positiveSignals.push('Uncompressed format - usually recorded directly from source');
   }
-  
-  // Duration estimation (rough based on file size and format)
-  // MP3: ~1MB per minute, WAV: ~10MB per minute
+
+  // Duration estimation (rough based on format heuristics)
   let estimatedDuration = 0;
   if (fileExt === 'mp3' || mimeType.includes('mpeg')) {
     estimatedDuration = fileSizeMB; // minutes
   } else if (fileExt === 'wav' || mimeType.includes('wav')) {
     estimatedDuration = fileSizeMB / 10; // minutes
   }
-  
+
   if (estimatedDuration > 0) {
-    if (estimatedDuration < 0.5) {
-      indicators.push('Very short audio duration - may be incomplete');
-      deepfakeScore += 10;
+    if (estimatedDuration < 0.03) {
+      addRisk(8, 'Extremely short audio (<2s) - risky if no other metadata');
+    } else if (estimatedDuration < 0.15) {
+      addRisk(4, 'Very short audio clip - limited speech for analysis');
     } else if (estimatedDuration > 5) {
-      spamIndicators.push('Long audio duration - possible automated/spam call');
-      deepfakeScore += 10;
+      addRisk(15, 'Long audio duration - could be robocall style content', spamIndicators);
+    } else {
+      positiveSignals.push('Natural duration for the given file type');
     }
   }
-  
-  // Check for common spam call characteristics in filename
-  const spamPatterns = ['spam', 'robocall', 'automated', 'telemarketer', 'scam'];
-  for (const pattern of spamPatterns) {
-    if (fileName.includes(pattern)) {
-      spamIndicators.push(`Filename suggests spam: "${pattern}"`);
-      deepfakeScore += 20;
-    }
+
+  // Reward presence of positive indicators so everything is not marked suspicious
+  if (positiveSignals.length > 0) {
+    deepfakeScore = Math.max(deepfakeScore - 10, 0);
   }
-  
-  // Determine verdict
+
+  // Determine verdict using tiered thresholds to avoid every file being suspicious
   let verdict = 'real';
-  let confidence = 0.3; // Low confidence for basic analysis
-  const isDeepfake = deepfakeScore >= 30;
-  const isSpam = deepfakeScore >= 25 && spamIndicators.length > 0;
-  
+  let confidence = 0.25; // still low because we are not using ML features
+  const isSpam = deepfakeScore >= 70 && spamIndicators.length > 0;
+  const isDeepfake = deepfakeScore >= 80;
+
   if (isSpam) {
     verdict = 'spam';
-    confidence = 0.4;
+    confidence = 0.45;
   } else if (isDeepfake) {
     verdict = 'suspicious';
-    confidence = 0.35;
-  } else if (deepfakeScore >= 15) {
+    confidence = 0.4;
+  } else if (deepfakeScore >= 45) {
     verdict = 'suspicious';
-    confidence = 0.3;
+    confidence = 0.32;
+  } else if (deepfakeScore >= 25) {
+    verdict = 'real';
+    indicators.push('Low-risk signals only — treat as genuine but continue monitoring');
+  } else {
+    indicators.push('No high-risk signals detected; file looks normal for basic checks');
   }
-  
+
   return {
     isDeepfake: isDeepfake || isSpam,
     deepfakeScore: Math.min(deepfakeScore, 100),
-    confidence: confidence,
-    verdict: verdict,
-    detectionMethods: detectionMethods,
-    indicators: indicators.length > 0 ? indicators : ['Basic analysis completed - limited detection capabilities'],
-    spamIndicators: spamIndicators,
+    confidence,
+    verdict,
+    detectionMethods,
+    indicators,
+    spamIndicators,
     technicalDetails: {
       fileSize: file.size,
       fileSizeMB: fileSizeMB.toFixed(2),
-      mimeType: mimeType,
+      mimeType,
       fileName: file.originalname,
-      estimatedDuration: estimatedDuration > 0 ? `${estimatedDuration.toFixed(1)} minutes` : 'unknown',
+      estimatedDuration: estimatedDuration > 0 ? `${estimatedDuration.toFixed(2)} minutes` : 'unknown',
+      positiveSignals,
       analysisType: 'basic',
       note: 'Full analysis requires ML service with librosa for spectral, MFCC, and pitch analysis'
     }

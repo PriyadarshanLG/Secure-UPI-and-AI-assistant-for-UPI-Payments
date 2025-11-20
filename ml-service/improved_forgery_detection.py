@@ -352,3 +352,4 @@ def analyze_forgery_improved(image: Image.Image) -> Tuple[float, str, float, boo
 
 
 
+

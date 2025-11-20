@@ -3,16 +3,16 @@ Fraud Detection Configuration
 Adjustable thresholds for reducing false positives while maintaining security
 """
 
+import os
+
 # DETECTION SENSITIVITY LEVELS
 # Use 'balanced' for production (recommended)
 # Use 'strict' for high-security environments
 # Use 'lenient' for reducing false positives
 
-SENSITIVITY_LEVEL = "balanced"  # Options: 'strict', 'balanced', 'lenient'
+REQUESTED_SENSITIVITY = os.getenv("FRAUD_DETECTION_SENSITIVITY", "balanced").lower()
 
-# ========== THRESHOLDS BY SENSITIVITY ==
-
-=========
+# ========== THRESHOLDS BY SENSITIVITY ==========
 
 THRESHOLDS = {
     'strict': {
@@ -69,6 +69,8 @@ THRESHOLDS = {
         'missing_metadata_score': 5,  # Almost ignore missing metadata
     }
 }
+
+SENSITIVITY_LEVEL = REQUESTED_SENSITIVITY if REQUESTED_SENSITIVITY in THRESHOLDS else 'balanced'
 
 # Get current thresholds based on sensitivity level
 def get_thresholds():
@@ -154,6 +156,7 @@ def print_current_config():
     for key, value in thresholds.items():
         print(f"  {key}: {value}")
     print(f"\n{'='*60}\n")
+
 
 
 

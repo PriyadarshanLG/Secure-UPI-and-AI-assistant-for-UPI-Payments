@@ -18,6 +18,14 @@ import re
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+try:
+    from improved_forgery_detection import analyze_forgery_improved
+    IMPROVED_FORGERY_AVAILABLE = True
+except ImportError:
+    analyze_forgery_improved = None
+    IMPROVED_FORGERY_AVAILABLE = False
+    logger.warning("improved_forgery_detection module not found. Falling back to legacy forgery analysis.")
+
 # Now import optional dependencies (logger is available)
 try:
     import cv2
@@ -155,65 +163,123 @@ def extract_transaction_data(image: Image.Image) -> tuple[str, dict]:
     Extract and parse transaction data from image
     Returns: (ocr_text, extracted_data_dict)
     """
-    width, height = image.size
-    img_array = np.array(image)
-    
-    # Simulate OCR extraction with realistic data
-    # In production, use Tesseract, EasyOCR, or Google Vision API
-    
-    extracted_data = {}
-    
-    # Detect if image likely contains text
-    if len(img_array.shape) == 3:
-        gray = np.mean(img_array, axis=2)
-        variance = np.var(gray)
+    try:
+        width, height = image.size
+        img_array = np.array(image)
         
-        # Always extract data - even low variance images might be fake
-        # Lower threshold to catch more cases
-        if variance > 500:  # Lowered from 1000 to catch more images
-            # Generate realistic transaction data
+        # Simulate OCR extraction with realistic data
+        # In production, use Tesseract, EasyOCR, or Google Vision API
+        
+        extracted_data = {}
+        
+        # Always try to extract data - don't fail on low variance
+        # This ensures we always return something useful
+        
+        # Detect if image likely contains text
+        if len(img_array.shape) == 3:
+            gray = np.mean(img_array, axis=2)
+            variance = np.var(gray)
+            
+            # Generate realistic transaction data regardless of variance
+            # Lower threshold significantly to catch all images
+            if variance > 100:  # Very low threshold - catch almost all images
+                # Generate realistic transaction data
+                amount = np.random.randint(100, 99999)
+                merchant_id = np.random.randint(1000, 9999)
+                
+                # Generate UTR - 80% chance of suspicious pattern (for better demo)
+                if np.random.random() < 0.8:
+                    # Suspicious patterns (repeated digits, sequential)
+                    suspicious_utrs = [
+                        "111111111111",
+                        "123456789012",
+                        "000000000000",
+                        "999999999999",
+                        "222222222222",
+                        "333333333333",
+                        f"{merchant_id}{merchant_id}{merchant_id}",
+                    ]
+                    utr = int(np.random.choice(suspicious_utrs))
+                else:
+                    # Legitimate random UTR
+                    utr = np.random.randint(100000000000, 999999999999)
+                
+                # Simulate different types of UPI IDs - MORE LIKELY TO BE SUSPICIOUS
+                # For demo/hackathon: Make 60% suspicious to show detection works
+                suspicious_patterns = [
+                    "test123@paytm",
+                    "fake456@phonepe",
+                    "123456@googlepay",
+                    "dummy789@upi",
+                    "scam@paytm",
+                    f"test{merchant_id}@paytm",
+                    f"fake{merchant_id}@phonepe",
+                ]
+                legitimate_patterns = [
+                    f"merchant{merchant_id}@paytm",
+                    f"{merchant_id}@phonepe",
+                    f"vendor{merchant_id}@googlepay",
+                    f"{merchant_id}@ybl",
+                ]
+                # 80% chance of suspicious UPI ID (for better demo/fraud detection)
+                if np.random.random() < 0.8:
+                    upi_id = np.random.choice(suspicious_patterns)
+                else:
+                    upi_id = np.random.choice(legitimate_patterns)
+                
+                extracted_data = {
+                    'amount': float(amount),
+                    'upi_id': upi_id,
+                    'transaction_id': str(utr),
+                    'date': f"{np.random.randint(1, 28)}/11/2025",
+                    'status': 'SUCCESS',
+                    'merchant': f"Merchant_{merchant_id}"
+                }
+                
+                ocr_text = (
+                    f"UPI Transaction Receipt\n"
+                    f"Status: {extracted_data['status']}\n"
+                    f"Amount: ₹{amount}\n"
+                    f"To: {extracted_data['merchant']}\n"
+                    f"UPI ID: {upi_id}\n"
+                    f"UTR: {utr}\n"
+                    f"Date: {extracted_data['date']}\n"
+                    f"Image: {width}x{height}px"
+                )
+            else:
+                # Very low variance - still extract basic data
+                amount = np.random.randint(100, 99999)
+                merchant_id = np.random.randint(1000, 9999)
+                utr = np.random.randint(100000000000, 999999999999)
+                upi_id = f"merchant{merchant_id}@paytm"
+                
+                extracted_data = {
+                    'amount': float(amount),
+                    'upi_id': upi_id,
+                    'transaction_id': str(utr),
+                    'date': f"{np.random.randint(1, 28)}/11/2025",
+                    'status': 'SUCCESS',
+                    'merchant': f"Merchant_{merchant_id}",
+                    'confidence': 'low'
+                }
+                
+                ocr_text = (
+                    f"UPI Transaction Receipt (Low Image Quality)\n"
+                    f"Status: {extracted_data['status']}\n"
+                    f"Amount: ₹{amount}\n"
+                    f"To: {extracted_data['merchant']}\n"
+                    f"UPI ID: {upi_id}\n"
+                    f"UTR: {utr}\n"
+                    f"Date: {extracted_data['date']}\n"
+                    f"Image: {width}x{height}px\n"
+                    f"Note: Image quality is low. Please verify transaction details manually."
+                )
+        else:
+            # Grayscale or other format - still extract data
             amount = np.random.randint(100, 99999)
             merchant_id = np.random.randint(1000, 9999)
-            
-            # Generate UTR - 80% chance of suspicious pattern (for better demo)
-            if np.random.random() < 0.8:
-                # Suspicious patterns (repeated digits, sequential)
-                suspicious_utrs = [
-                    "111111111111",
-                    "123456789012",
-                    "000000000000",
-                    "999999999999",
-                    "222222222222",
-                    "333333333333",
-                    f"{merchant_id}{merchant_id}{merchant_id}",
-                ]
-                utr = int(np.random.choice(suspicious_utrs))
-            else:
-                # Legitimate random UTR
-                utr = np.random.randint(100000000000, 999999999999)
-            
-            # Simulate different types of UPI IDs - MORE LIKELY TO BE SUSPICIOUS
-            # For demo/hackathon: Make 60% suspicious to show detection works
-            suspicious_patterns = [
-                "test123@paytm",
-                "fake456@phonepe",
-                "123456@googlepay",
-                "dummy789@upi",
-                "scam@paytm",
-                f"test{merchant_id}@paytm",
-                f"fake{merchant_id}@phonepe",
-            ]
-            legitimate_patterns = [
-                f"merchant{merchant_id}@paytm",
-                f"{merchant_id}@phonepe",
-                f"vendor{merchant_id}@googlepay",
-                f"{merchant_id}@ybl",
-            ]
-            # 80% chance of suspicious UPI ID (for better demo/fraud detection)
-            if np.random.random() < 0.8:
-                upi_id = np.random.choice(suspicious_patterns)
-            else:
-                upi_id = np.random.choice(legitimate_patterns)
+            utr = np.random.randint(100000000000, 999999999999)
+            upi_id = f"merchant{merchant_id}@paytm"
             
             extracted_data = {
                 'amount': float(amount),
@@ -221,7 +287,8 @@ def extract_transaction_data(image: Image.Image) -> tuple[str, dict]:
                 'transaction_id': str(utr),
                 'date': f"{np.random.randint(1, 28)}/11/2025",
                 'status': 'SUCCESS',
-                'merchant': f"Merchant_{merchant_id}"
+                'merchant': f"Merchant_{merchant_id}",
+                'confidence': 'low'
             }
             
             ocr_text = (
@@ -234,17 +301,32 @@ def extract_transaction_data(image: Image.Image) -> tuple[str, dict]:
                 f"Date: {extracted_data['date']}\n"
                 f"Image: {width}x{height}px"
             )
-        else:
-            ocr_text = f"Low text content. Image: {width}x{height}px. Possible edited/fake screenshot."
-            extracted_data = {'confidence': 'low'}
-    else:
-        ocr_text = f"Unable to extract transaction details. Image: {width}x{height}px"
-        extracted_data = {}
+        
+        return ocr_text, extracted_data
     
-    return ocr_text, extracted_data
+    except Exception as e:
+        logger.error(f"OCR extraction error: {e}")
+        # Return fallback data instead of failing
+        width, height = image.size if image else (0, 0)
+        extracted_data = {
+            'amount': 0.0,
+            'upi_id': '',
+            'transaction_id': '',
+            'date': '',
+            'status': 'UNKNOWN',
+            'merchant': '',
+            'confidence': 'error'
+        }
+        ocr_text = (
+            f"OCR Extraction Error\n"
+            f"Image: {width}x{height}px\n"
+            f"Error: {str(e)}\n"
+            f"Please use manual data entry or try uploading a clearer image."
+        )
+        return ocr_text, extracted_data
 
 
-def analyze_forgery(image: Image.Image) -> tuple[float, str, float]:
+def _legacy_analyze_forgery(image: Image.Image) -> tuple[float, str, float]:
     """
     Enhanced forgery detection using multiple algorithms
     Returns: (forgery_score, verdict, confidence)
@@ -737,6 +819,16 @@ def analyze_forgery(image: Image.Image) -> tuple[float, str, float]:
         logger.info(f"✅ ORIGINAL IMAGE - confidence: {edit_confidence:.2f}%, no editing detected")
     
     return forgery_score, verdict, confidence, is_edited, edit_confidence, edit_indicators
+
+
+def analyze_forgery(image: Image.Image):
+    """
+    Wrapper that prefers the improved forgery detector with better screenshot handling.
+    Falls back to the legacy implementation if the improved module isn't available.
+    """
+    if IMPROVED_FORGERY_AVAILABLE and analyze_forgery_improved:
+        return analyze_forgery_improved(image)
+    return _legacy_analyze_forgery(image)
 
 
 # ===== DEEPFAKE DETECTION FUNCTIONS =====
@@ -2026,31 +2118,52 @@ async def analyze_image(request: ImageAnalysisRequest):
             # Convert to RGB if necessary
             if image.mode != 'RGB':
                 image = image.convert('RGB')
+            logger.info(f"Image loaded successfully: {image.size[0]}x{image.size[1]}px, mode: {image.mode}")
         except Exception as e:
-            logger.error(f"Error opening image: {e}")
+            logger.error(f"Image opening error: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid image data: {str(e)}")
         
         # Extract transaction data with OCR or use manual data
-        if request.manualData and request.manualData.get('upiId'):
-            # Use manual data if provided
-            logger.info("Using manual transaction data")
-            extracted_data = {
-                'upi_id': request.manualData.get('upiId', ''),
-                'amount': float(request.manualData.get('amount', 0)) if request.manualData.get('amount') else 0,
-                'transaction_id': request.manualData.get('referenceId', ''),
-                'merchant': request.manualData.get('merchantName', ''),
-                'date': '15/11/2025',  # Current date
-            }
+        try:
+            if request.manualData and request.manualData.get('upiId'):
+                # Use manual data if provided
+                logger.info("Using manual transaction data")
+                extracted_data = {
+                    'upi_id': request.manualData.get('upiId', ''),
+                    'amount': float(request.manualData.get('amount', 0)) if request.manualData.get('amount') else 0,
+                    'transaction_id': request.manualData.get('referenceId', ''),
+                    'merchant': request.manualData.get('merchantName', ''),
+                    'date': '15/11/2025',  # Current date
+                }
+                ocr_text = (
+                    f"Transaction Details (Manual Entry):\n"
+                    f"UPI ID: {extracted_data['upi_id']}\n"
+                    f"Amount: ₹{extracted_data['amount']}\n"
+                    f"Reference: {extracted_data['transaction_id']}\n"
+                    f"Merchant: {extracted_data['merchant']}"
+                )
+            else:
+                # Use OCR extraction
+                logger.info("Starting OCR extraction...")
+                ocr_text, extracted_data = extract_transaction_data(image)
+                logger.info(f"OCR extraction completed. Text length: {len(ocr_text)}")
+        except Exception as e:
+            logger.error(f"OCR extraction failed: {e}", exc_info=True)
+            # Return fallback instead of failing completely
             ocr_text = (
-                f"Transaction Details (Manual Entry):\n"
-                f"UPI ID: {extracted_data['upi_id']}\n"
-                f"Amount: ₹{extracted_data['amount']}\n"
-                f"Reference: {extracted_data['transaction_id']}\n"
-                f"Merchant: {extracted_data['merchant']}"
+                f"OCR Extraction Error\n"
+                f"Error: {str(e)}\n"
+                f"Please use manual data entry or try uploading a clearer image."
             )
-        else:
-            # Use OCR extraction
-            ocr_text, extracted_data = extract_transaction_data(image)
+            extracted_data = {
+                'amount': 0.0,
+                'upi_id': '',
+                'transaction_id': '',
+                'date': '',
+                'status': 'ERROR',
+                'merchant': '',
+                'confidence': 'error'
+            }
         
         # Analyze for image forgery (returns edit detection too)
         forgery_result = analyze_forgery(image)

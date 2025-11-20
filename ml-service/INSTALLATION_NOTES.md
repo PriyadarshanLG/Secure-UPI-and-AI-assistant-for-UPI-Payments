@@ -50,7 +50,7 @@ setup-ml-service.bat
 ```
 
 This will:
-1. Check Python version
+1. Check that Python **3.11.x** is available (falls back to python/python3 only if they point to 3.11)
 2. Create a virtual environment (optional)
 3. Install all dependencies
 4. Verify installation
@@ -126,8 +126,15 @@ pip install mediapipe     # For face detection
 
 ```bash
 cd ml-service
+
+# Windows (forces the Python launcher to use 3.11.x)
+py -3.11 main.py
+
+# macOS/Linux or if a 3.11 virtualenv is activated
 python main.py
 ```
+
+> **Tip:** If `py -3.11` fails, reinstall Python 3.11.x and ensure it is registered with the Windows Python Launcher (`py -0p` should list it). For non-Windows environments, activate the virtual environment that was created with Python 3.11 before running `python main.py`.
 
 You should see:
 ```

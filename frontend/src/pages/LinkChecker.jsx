@@ -113,6 +113,39 @@ const LinkChecker = () => {
     return statusUpper === 'UNSAFE' ? 'UNSAFE' : statusUpper;
   };
 
+  /**
+   * Normalizes backend threat payloads (objects or strings) into a render-friendly shape.
+   */
+  const formatThreat = (threat) => {
+    if (!threat) {
+      return { title: 'UNKNOWN_THREAT', platform: null, description: null };
+    }
+
+    if (typeof threat === 'string') {
+      return { title: threat, platform: null, description: null };
+    }
+
+    const platform = threat.platform || threat.platformType || null;
+    const detailSource = threat.details ?? threat.metadata ?? null;
+    let description = null;
+
+    if (typeof detailSource === 'string') {
+      description = detailSource;
+    } else if (detailSource && typeof detailSource === 'object') {
+      try {
+        description = JSON.stringify(detailSource);
+      } catch (err) {
+        description = 'Additional details available';
+      }
+    }
+
+    return {
+      title: threat.type || 'UNKNOWN_THREAT',
+      platform,
+      description,
+    };
+  };
+
   return (
     <div className={`min-h-screen ${isDark ? 'bg-gradient-to-br from-slate-950 via-slate-900 to-black text-slate-100' : 'bg-gradient-to-br from-gray-50 via-white to-gray-100 text-gray-900'} relative overflow-hidden`}>
       {/* Cyber Grid Background */}
@@ -327,12 +360,27 @@ const LinkChecker = () => {
                     [THREATS_DETECTED] ({result.threats.length})
                   </h4>
                   <ul className="space-y-2">
-                    {result.threats.map((threat, index) => (
-                      <li key={index} className="flex items-start space-x-3 p-3 bg-red-900/20 rounded border border-red-500/40">
-                        <span className="text-red-400 font-mono font-bold">#{index + 1}</span>
-                        <span className="text-red-300 font-mono text-sm">{threat}</span>
-                      </li>
-                    ))}
+                    {result.threats.map((threat, index) => {
+                      const formatted = formatThreat(threat);
+                      return (
+                        <li key={index} className="flex items-start space-x-3 p-3 bg-red-900/20 rounded border border-red-500/40">
+                          <span className="text-red-400 font-mono font-bold">#{index + 1}</span>
+                          <div className="text-red-300 font-mono text-sm space-y-1">
+                            <p className="font-semibold">{formatted.title}</p>
+                            {formatted.platform && (
+                              <p className="text-red-200 text-xs uppercase tracking-wide">
+                                Platform: {formatted.platform}
+                              </p>
+                            )}
+                            {formatted.description && (
+                              <p className="text-red-100 text-xs break-words">
+                                {formatted.description}
+                              </p>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}

@@ -8,9 +8,9 @@ import Dashboard from './pages/Dashboard';
 import EvidenceUpload from './pages/EvidenceUpload';
 import LinkChecker from './pages/LinkChecker';
 import SMSChecker from './pages/SMSChecker';
-import DeepfakeDetector from './pages/DeepfakeDetector';
 import VoiceDetector from './pages/VoiceDetector';
 import Profile from './pages/Profile';
+import SocialAccountIntel from './pages/SocialAccountIntel';
 
 function App() {
   return (
@@ -29,8 +29,8 @@ function App() {
           <Route path="evidence/upload" element={<EvidenceUpload />} />
           <Route path="links/check" element={<LinkChecker />} />
           <Route path="sms/check" element={<SMSChecker />} />
-          <Route path="deepfake/detect" element={<DeepfakeDetector />} />
           <Route path="voice/detect" element={<VoiceDetector />} />
+          <Route path="social/accounts" element={<SocialAccountIntel />} />
           <Route path="profile" element={<Profile />} />
           
           {/* Redirect old routes to dashboard */}

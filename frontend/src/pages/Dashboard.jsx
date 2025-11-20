@@ -13,7 +13,6 @@ const Dashboard = () => {
   const [stats, setStats] = useState({
     totalAnalyses: 0,
     fraudDetected: 0,
-    deepfakesDetected: 0,
     spamCallsDetected: 0,
     safeLinks: 0,
     suspiciousLinks: 0,
@@ -34,7 +33,6 @@ const Dashboard = () => {
     transaction: { hourly: 0, daily: 0, monthly: 0, yearly: 0, yearlyData: [] },
     link: { hourly: 0, daily: 0, monthly: 0, yearly: 0, yearlyData: [] },
     sms: { hourly: 0, daily: 0, monthly: 0, yearly: 0, yearlyData: [] },
-    deepfake: { hourly: 0, daily: 0, monthly: 0, yearly: 0, yearlyData: [] },
     voice: { hourly: 0, daily: 0, monthly: 0, yearly: 0, yearlyData: [] },
   });
 
@@ -108,13 +106,11 @@ const Dashboard = () => {
         return metadata.fraudDetected === true;
       }).length;
       
-      const tamperedEvidence = evidence.filter(e => e.forgeryVerdict === 'tampered').length;
       const highRiskTransactions = transactions.filter(t => t.riskScore > 70).length;
       
       setStats({
         totalAnalyses: evidence.length + transactions.length,
         fraudDetected: fraudDetected + highRiskTransactions,
-        deepfakesDetected: tamperedEvidence,
         spamCallsDetected: 0,
         safeLinks: 0,
         suspiciousLinks: 0,
@@ -181,13 +177,6 @@ const Dashboard = () => {
       const smsMonthly = smsBase;
       const smsYearly = smsMonthly * 12;
 
-      // Deepfake: ~150K per year
-      const deepfakeBase = 12500;
-      const deepfakeHourly = Math.floor(deepfakeBase / 30 / 24);
-      const deepfakeDaily = Math.floor(deepfakeBase / 30);
-      const deepfakeMonthly = deepfakeBase;
-      const deepfakeYearly = deepfakeMonthly * 12;
-
       // Voice/Spam calls: ~4.5M per year
       const voiceBase = 375000;
       const voiceHourly = Math.floor(voiceBase / 30 / 24);
@@ -216,13 +205,6 @@ const Dashboard = () => {
           monthly: smsMonthly,
           yearly: smsYearly,
           yearlyData: generateYearlyData(smsBase),
-        },
-        deepfake: {
-          hourly: deepfakeHourly,
-          daily: deepfakeDaily,
-          monthly: deepfakeMonthly,
-          yearly: deepfakeYearly,
-          yearlyData: generateYearlyData(deepfakeBase),
         },
         voice: {
           hourly: voiceHourly,
@@ -274,17 +256,6 @@ const Dashboard = () => {
       code: 'SMS-PARSER',
     },
     {
-      id: 'deepfake',
-      title: '[0x04] DEEPFAKE DETECTOR',
-      description: 'AI-Generated Content Analysis',
-      icon: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z',
-      color: 'from-orange-500 to-red-600',
-      glow: 'shadow-orange-500/50',
-      link: '/deepfake/detect',
-      status: 'ACTIVE',
-      code: 'DF-DETECT',
-    },
-    {
       id: 'voice',
       title: '[0x05] VOICE ANALYZER',
       description: 'AI Voice & Spam Call Detection',
@@ -294,6 +265,17 @@ const Dashboard = () => {
       link: '/voice/detect',
       status: 'ACTIVE',
       code: 'VOICE-AI',
+    },
+    {
+      id: 'social',
+      title: '[0x09] FAKE ACCOUNT INTEL',
+      description: 'Graph + content signals for synthetic profile detection',
+      icon: 'M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0z M19 10a7 7 0 11-14 0 7 7 0 0114 0z',
+      color: 'from-indigo-500 to-purple-600',
+      glow: 'shadow-indigo-500/50',
+      link: '/social/accounts',
+      status: 'ACTIVE',
+      code: 'SOCIAL-AI',
     },
   ];
 
@@ -725,80 +707,6 @@ const Dashboard = () => {
             );
           })()}
           
-          {/* Deepfake Detector - 06 */}
-          {(() => {
-            const data = featureScams.deepfake;
-            const maxYearly = Math.max(...data.yearlyData, 1);
-            const yearlyPoints = data.yearlyData.map((val, idx) => `${(idx * 100) / 11},${100 - (val / maxYearly) * 80}`).join(' L ');
-            const formatNumber = (num) => {
-              if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
-              if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
-              return num.toString();
-            };
-            return (
-              <div className={`${isDark ? 'bg-slate-900/80' : 'bg-orange-50/80 border-orange-200'} backdrop-blur-xl border-2 border-orange-500/60 rounded-xl p-6 relative overflow-hidden group hover:border-orange-400 hover:shadow-2xl hover:shadow-orange-500/40 transition-all shadow-xl`}>
-                <div className="relative">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <div className="text-orange-600 font-mono text-xs uppercase tracking-wider font-bold mb-1">Deepfake Detector</div>
-                      <div className="text-orange-500 font-mono text-lg font-bold">06</div>
-                    </div>
-                    <div className="bg-gradient-to-br from-orange-500 to-red-600 p-2 rounded border-2 border-orange-400/50 shadow-lg">
-                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                    </div>
-                  </div>
-                  {/* Stats in order: 1 hour, 24 hours, 1 month, 1 year */}
-                  <div className="space-y-2 mb-4">
-                    <div className="flex items-center justify-between">
-                      <span className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>1 Hour:</span>
-                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-orange-400' : 'text-orange-600'}`}>{formatNumber(data.hourly)}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>24 Hours:</span>
-                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-orange-400' : 'text-orange-600'}`}>{formatNumber(data.daily)}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>1 Month:</span>
-                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-orange-400' : 'text-orange-600'}`}>{formatNumber(data.monthly)}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>1 Year:</span>
-                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-orange-400' : 'text-orange-600'}`}>{formatNumber(data.yearly)}</span>
-                    </div>
-                  </div>
-                  {/* Yearly Line Graph */}
-                  <div>
-                    <p className={`text-xs font-mono mb-2 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Yearly Trend (12 months)</p>
-                    <svg className="w-full h-32" viewBox="0 0 100 100" preserveAspectRatio="none">
-                      <defs>
-                        <linearGradient id="deepfakeYearlyGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                          <stop offset="0%" style={{ stopColor: '#f97316', stopOpacity: 0.4 }} />
-                          <stop offset="50%" style={{ stopColor: '#f97316', stopOpacity: 0.2 }} />
-                          <stop offset="100%" style={{ stopColor: '#f97316', stopOpacity: 0.05 }} />
-                        </linearGradient>
-                      </defs>
-                      <path 
-                        className={`line-graph ${graphsAnimated ? 'animated' : ''}`}
-                        d={`M 0,100 L ${yearlyPoints} L 100,100 Z`}
-                        fill="url(#deepfakeYearlyGradient)"
-                      />
-                      <path 
-                        className={`line-graph ${graphsAnimated ? 'animated' : ''}`}
-                        d={`M 0,100 L ${yearlyPoints}`}
-                        fill="none"
-                        stroke="#f97316"
-                        strokeWidth="2"
-                        opacity="0.8"
-                      />
-                    </svg>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-          
           {/* Voice Detector */}
           {(() => {
             const data = featureScams.voice;
@@ -872,6 +780,7 @@ const Dashboard = () => {
               </div>
             );
           })()}
+          
         </div>
 
         {/* Terminal Window - Hacker Style with Dark Terminal */}
@@ -904,7 +813,7 @@ const Dashboard = () => {
               </p>
               <p className="flex items-center text-green-400">
                 <span className="text-cyan-400 mr-2 font-bold">$</span>
-                <span>deepfake-detector --status</span>
+                <span>link-scanner --status</span>
                 <span className="ml-2 text-green-500">ACTIVE</span>
               </p>
               <p className="flex items-center text-green-400">
@@ -1275,10 +1184,10 @@ const Dashboard = () => {
                   </div>
                   <div className="flex-1">
                     <p className={`font-mono text-sm font-bold mb-1 ${isDark ? 'text-orange-300' : 'text-orange-700'}`}>
-                      DEEPFAKE CONTENT
+                      FORENSIC EVIDENCE
                     </p>
                     <p className={`text-xs font-mono ${isDark ? 'text-orange-200' : 'text-orange-600'}`}>
-                      {stats.deepfakesDetected} AI-generated content detected and flagged
+                      {stats.totalAnalyses} evidence items scanned in the last 24 hours
                     </p>
                     <p className={`text-xs font-mono mt-2 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
                       {formatTime(currentTime)}
@@ -1375,12 +1284,12 @@ const Dashboard = () => {
                 <div className="flex items-center space-x-3">
                   <div className="w-8 h-8 bg-gradient-to-br from-orange-500 to-red-600 rounded-lg flex items-center justify-center">
                     <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                     </svg>
                   </div>
                   <div>
-                    <p className={`text-sm font-mono font-semibold ${isDark ? 'text-slate-50' : 'text-gray-900'}`}>Deepfakes</p>
-                    <p className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{stats.deepfakesDetected} flagged</p>
+                    <p className={`text-sm font-mono font-semibold ${isDark ? 'text-slate-50' : 'text-gray-900'}`}>Voice Scams</p>
+                    <p className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{stats.spamCallsDetected} blocked</p>
                   </div>
                 </div>
                 <span className={`text-xs font-mono font-bold ${isDark ? 'text-orange-400' : 'text-orange-600'}`}>+5%</span>
@@ -1670,33 +1579,33 @@ const Dashboard = () => {
                 </div>
               </div>
 
-              {/* Deepfake/Video Scams */}
+              {/* Remote Access Scams */}
               <div className={`${isDark ? 'bg-slate-800/60 border-red-500/40' : 'bg-white/80 border-red-300'} border-2 rounded-lg p-5 hover:shadow-lg transition-all`}>
                 <div className="flex items-center space-x-3 mb-3">
                   <div className={`p-2 rounded ${isDark ? 'bg-red-900/40' : 'bg-red-100'}`}>
                     <svg className={`w-6 h-6 ${isDark ? 'text-red-400' : 'text-red-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16h6m2 5H7a2 2 0 01-2-2V7a2 2 0 012-2h10a2 2 0 012 2v12a2 2 0 01-2 2z" />
                     </svg>
                   </div>
-                  <h3 className={`font-mono font-bold ${isDark ? 'text-red-300' : 'text-red-700'}`}>Deepfake/Video Scams</h3>
+                  <h3 className={`font-mono font-bold ${isDark ? 'text-red-300' : 'text-red-700'}`}>Remote Access Scams</h3>
                 </div>
                 <ul className={`space-y-2 text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
                   <li className="flex items-start">
                     <span className="text-red-500 mr-2">•</span>
-                    <span>Fake video calls from "relatives"</span>
+                    <span>Unknown "support" agents asking to install screen-sharing apps</span>
                   </li>
                   <li className="flex items-start">
                     <span className="text-red-500 mr-2">•</span>
-                    <span>AI-generated voice calls</span>
+                    <span>Requests to reveal OTP while screen sharing</span>
                   </li>
                   <li className="flex items-start">
                     <span className="text-red-500 mr-2">•</span>
-                    <span>Fake celebrity endorsements</span>
+                    <span>Fake RBI / bank officials demanding remote access</span>
                   </li>
                 </ul>
                 <div className={`mt-3 p-2 rounded ${isDark ? 'bg-yellow-900/20 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'} border`}>
                   <p className={`text-xs font-mono ${isDark ? 'text-yellow-300' : 'text-yellow-700'}`}>
-                    <strong>Protect:</strong> Verify identity through secret questions, beware of urgent money requests
+                    <strong>Protect:</strong> Never share screen/OTP, call the official bank number from the website/app
                   </p>
                 </div>
               </div>
