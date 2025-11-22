@@ -34,6 +34,7 @@ const Dashboard = () => {
     link: { hourly: 0, daily: 0, monthly: 0, yearly: 0, yearlyData: [] },
     sms: { hourly: 0, daily: 0, monthly: 0, yearly: 0, yearlyData: [] },
     voice: { hourly: 0, daily: 0, monthly: 0, yearly: 0, yearlyData: [] },
+    social: { hourly: 0, daily: 0, monthly: 0, yearly: 0, yearlyData: [] },
   });
 
   // Handle hash navigation to education section (only once on mount) - SIMPLIFIED
@@ -184,6 +185,13 @@ const Dashboard = () => {
       const voiceMonthly = voiceBase;
       const voiceYearly = voiceMonthly * 12;
 
+      // Social/Fake accounts: ~1.2M per year
+      const socialBase = 100000;
+      const socialHourly = Math.floor(socialBase / 30 / 24);
+      const socialDaily = Math.floor(socialBase / 30);
+      const socialMonthly = socialBase;
+      const socialYearly = socialMonthly * 12;
+
       setFeatureScams({
         transaction: {
           hourly: transactionHourly,
@@ -212,6 +220,13 @@ const Dashboard = () => {
           monthly: voiceMonthly,
           yearly: voiceYearly,
           yearlyData: generateYearlyData(voiceBase),
+        },
+        social: {
+          hourly: socialHourly,
+          daily: socialDaily,
+          monthly: socialMonthly,
+          yearly: socialYearly,
+          yearlyData: generateYearlyData(socialBase),
         },
       });
     } catch (error) {
@@ -771,6 +786,80 @@ const Dashboard = () => {
                         d={`M 0,100 L ${yearlyPoints}`}
                         fill="none"
                         stroke="#ec4899"
+                        strokeWidth="2"
+                        opacity="0.8"
+                      />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+          
+          {/* Social Account Intel - 06 */}
+          {(() => {
+            const data = featureScams.social;
+            const maxYearly = Math.max(...data.yearlyData, 1);
+            const yearlyPoints = data.yearlyData.map((val, idx) => `${(idx * 100) / 11},${100 - (val / maxYearly) * 80}`).join(' L ');
+            const formatNumber = (num) => {
+              if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+              if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+              return num.toString();
+            };
+            return (
+              <div className={`${isDark ? 'bg-slate-900/80' : 'bg-indigo-50/80 border-indigo-200'} backdrop-blur-xl border-2 border-indigo-500/60 rounded-xl p-6 relative overflow-hidden group hover:border-indigo-400 hover:shadow-2xl hover:shadow-indigo-500/40 transition-all shadow-xl`}>
+                <div className="relative">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <div className="text-indigo-600 font-mono text-xs uppercase tracking-wider font-bold mb-1">Fake Account Intel</div>
+                      <div className="text-indigo-500 font-mono text-lg font-bold">06</div>
+                    </div>
+                    <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-2 rounded border-2 border-indigo-400/50 shadow-lg">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0z M19 10a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </div>
+                  </div>
+                  {/* Stats in order: 1 hour, 24 hours, 1 month, 1 year */}
+                  <div className="space-y-2 mb-4">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>1 Hour:</span>
+                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{formatNumber(data.hourly)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>24 Hours:</span>
+                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{formatNumber(data.daily)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>1 Month:</span>
+                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{formatNumber(data.monthly)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>1 Year:</span>
+                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{formatNumber(data.yearly)}</span>
+                    </div>
+                  </div>
+                  {/* Yearly Line Graph */}
+                  <div>
+                    <p className={`text-xs font-mono mb-2 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>Yearly Trend (12 months)</p>
+                    <svg className="w-full h-32" viewBox="0 0 100 100" preserveAspectRatio="none">
+                      <defs>
+                        <linearGradient id="socialYearlyGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" style={{ stopColor: '#6366f1', stopOpacity: 0.4 }} />
+                          <stop offset="50%" style={{ stopColor: '#6366f1', stopOpacity: 0.2 }} />
+                          <stop offset="100%" style={{ stopColor: '#6366f1', stopOpacity: 0.05 }} />
+                        </linearGradient>
+                      </defs>
+                      <path 
+                        className={`line-graph ${graphsAnimated ? 'animated' : ''}`}
+                        d={`M 0,100 L ${yearlyPoints} L 100,100 Z`}
+                        fill="url(#socialYearlyGradient)"
+                      />
+                      <path 
+                        className={`line-graph ${graphsAnimated ? 'animated' : ''}`}
+                        d={`M 0,100 L ${yearlyPoints}`}
+                        fill="none"
+                        stroke="#6366f1"
                         strokeWidth="2"
                         opacity="0.8"
                       />

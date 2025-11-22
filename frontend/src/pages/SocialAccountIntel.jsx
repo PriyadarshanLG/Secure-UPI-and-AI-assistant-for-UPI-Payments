@@ -147,26 +147,51 @@ const SocialAccountIntel = () => {
             } backdrop-blur-xl border-2 border-cyan-500/60 rounded-2xl px-6 py-6 shadow-2xl shadow-cyan-500/30 space-y-6`}
           >
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-cyan-500/30 pb-4">
-              <div>
-                <p className="text-xs font-mono text-cyan-400 uppercase tracking-widest">Risk Level</p>
-                <h2 className="text-4xl font-mono font-black">
-                  <span className="bg-gradient-to-r from-red-400 via-yellow-400 to-green-400 bg-clip-text text-transparent">
-                    {result.riskLevel}
-                  </span>
+              <div className="flex-1">
+                <p className="text-xs font-mono text-cyan-400 uppercase tracking-widest mb-2">Account Status</p>
+                <h2 className={`text-6xl font-mono font-black mb-2 ${
+                  result.accountVerdict === 'FAKE' 
+                    ? 'text-red-500' 
+                    : 'text-green-500'
+                }`}>
+                  {result.accountVerdict || (result.isFake ? 'FAKE' : 'REAL')}
                 </h2>
-                <p className="text-sm font-mono text-slate-400">{result.metadata?.evaluatedAt}</p>
+                {result.fakeReason && (
+                  <p className="text-sm font-mono text-red-400 mt-1 mb-2">
+                    ⚠️ {result.fakeReason}
+                  </p>
+                )}
+                {result.stats && (
+                  <div className="flex gap-4 mt-2 text-xs font-mono">
+                    <span className="text-slate-400">
+                      Followers: <span className="text-cyan-300">{result.stats.followers}</span>
+                    </span>
+                    <span className="text-slate-400">
+                      Following: <span className="text-cyan-300">{result.stats.following}</span>
+                    </span>
+                    <span className="text-slate-400">
+                      Posts: <span className="text-cyan-300">{result.stats.posts}</span>
+                    </span>
+                  </div>
+                )}
+                <p className="text-sm font-mono text-slate-400 mt-2">{result.metadata?.evaluatedAt}</p>
                 {result.metadata?.source && (
                   <p className="text-[10px] font-mono text-slate-500 mt-1">SOURCE: {result.metadata.source.toUpperCase()}</p>
+                )}
+                {result.metadata?.instagramValidation?.username && result.metadata.instagramValidation.username !== 'unknown' && (
+                  <p className="text-xs font-mono text-cyan-300 mt-2">
+                    @{result.metadata.instagramValidation.username}
+                  </p>
                 )}
               </div>
               <div className="flex items-center space-x-4">
                 <div className="text-center">
                   <p className="text-xs font-mono text-slate-500">RISK SCORE</p>
-                  <p className="text-5xl font-mono font-black text-cyan-300">{result.riskScore}</p>
+                  <p className="text-3xl font-mono font-black text-cyan-300">{result.riskScore}</p>
                 </div>
                 <div className="text-center">
                   <p className="text-xs font-mono text-slate-500">CONFIDENCE</p>
-                  <p className="text-3xl font-mono font-black text-emerald-300">
+                  <p className="text-2xl font-mono font-black text-emerald-300">
                     {Math.round((result.metadata?.confidence || 0) * 100)}%
                   </p>
                 </div>
@@ -178,8 +203,15 @@ const SocialAccountIntel = () => {
                 isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-gray-50 border-gray-200'
               } border-2 rounded-xl p-4`}
             >
-              <p className="text-xs font-mono text-cyan-400 uppercase tracking-widest mb-2">Recommended Action</p>
-              <p className="text-lg font-mono text-slate-100">{result.recommendedAction}</p>
+              <p className="text-xs font-mono text-cyan-400 uppercase tracking-widest mb-2">Analysis Summary</p>
+              <p className={`text-lg font-mono font-bold mb-2 ${
+                result.accountVerdict === 'FAKE' || result.isFake
+                  ? 'text-red-400' 
+                  : 'text-green-400'
+              }`}>
+                This Instagram account is {result.accountVerdict || (result.isFake ? 'FAKE' : 'REAL')}
+              </p>
+              <p className="text-sm font-mono text-slate-300 mt-2">{result.recommendedAction}</p>
             </div>
 
             {result.reasons && result.reasons.length > 0 && (
@@ -233,6 +265,8 @@ const SocialAccountIntel = () => {
 };
 
 export default SocialAccountIntel;
+
+
 
 
 

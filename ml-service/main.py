@@ -68,17 +68,64 @@ except ImportError:
     PYDUB_AVAILABLE = False
     logger.warning("pydub not available. Some audio conversion features will be disabled.")
 
+try:
+    import pytesseract
+    # Try to find Tesseract in common Windows locations
+    import os
+    tesseract_paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    ]
+    tesseract_found = False
+    for path in tesseract_paths:
+        if os.path.exists(path):
+            pytesseract.pytesseract.tesseract_cmd = path
+            tesseract_found = True
+            logger.info(f"Tesseract found at: {path}")
+            break
+    
+    # Try to get version to verify it works
+    try:
+        pytesseract.get_tesseract_version()
+        TESSERACT_AVAILABLE = True
+        logger.info("Tesseract OCR is ready!")
+    except Exception as e:
+        if tesseract_found:
+            logger.warning(f"Tesseract found but version check failed: {e}")
+            TESSERACT_AVAILABLE = True  # Still try to use it
+        else:
+            TESSERACT_AVAILABLE = False
+            logger.warning("pytesseract available but Tesseract not found. Install Tesseract OCR and add to PATH.")
+except ImportError:
+    TESSERACT_AVAILABLE = False
+    logger.warning("pytesseract not available. Real OCR will be disabled. Install with: pip install pytesseract")
+
 from upi_validator import comprehensive_transaction_validation
 
-# Optional imports for explainable AI (TensorFlow/Keras)
-try:
-    import tensorflow as tf
-    from tensorflow import keras
-    from tensorflow.keras import layers
-    TENSORFLOW_AVAILABLE = True
-except ImportError:
-    TENSORFLOW_AVAILABLE = False
-    logger.warning("TensorFlow not available. CNN model features will be disabled. Install with: pip install tensorflow keras")
+# Optional imports for explainable AI (TensorFlow/Keras) - LAZY LOADED
+# TensorFlow is heavy, so we'll import it only when needed
+TENSORFLOW_AVAILABLE = None
+_tensorflow_loaded = False
+
+def _load_tensorflow():
+    """Lazy load TensorFlow only when needed"""
+    global TENSORFLOW_AVAILABLE, _tensorflow_loaded, tf, keras, layers
+    if _tensorflow_loaded:
+        return TENSORFLOW_AVAILABLE
+    
+    try:
+        import tensorflow as tf
+        from tensorflow import keras
+        from tensorflow.keras import layers
+        TENSORFLOW_AVAILABLE = True
+        _tensorflow_loaded = True
+        logger.info("TensorFlow loaded successfully")
+        return True
+    except ImportError:
+        TENSORFLOW_AVAILABLE = False
+        _tensorflow_loaded = True
+        logger.warning("TensorFlow not available. CNN model features will be disabled.")
+        return False
 
 try:
     import matplotlib
@@ -100,6 +147,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Startup event - service is ready immediately for basic operations
+@app.on_event("startup")
+async def startup_event():
+    """Service startup - mark as ready immediately"""
+    logger.info("ML Service starting up...")
+    logger.info("Service ready for requests (heavy dependencies will load on-demand)")
+    logger.info("Core features (forensics, validation) are available immediately")
 
 
 class ImageAnalysisRequest(BaseModel):
@@ -160,15 +215,106 @@ class VoiceDeepfakeDetectionResponse(BaseModel):
 
 def extract_transaction_data(image: Image.Image) -> tuple[str, dict]:
     """
-    Extract and parse transaction data from image
+    Extract and parse transaction data from image using REAL OCR
     Returns: (ocr_text, extracted_data_dict)
     """
     try:
         width, height = image.size
         img_array = np.array(image)
         
-        # Simulate OCR extraction with realistic data
-        # In production, use Tesseract, EasyOCR, or Google Vision API
+        # Try REAL OCR first (for Instagram screenshots, social media profiles, etc.)
+        ocr_text = ""
+        if TESSERACT_AVAILABLE:
+            try:
+                # Preprocess image for better OCR - IMPROVED for Instagram screenshots
+                if CV2_AVAILABLE:
+                    # Convert PIL to OpenCV format
+                    img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+                    
+                    # Try multiple preprocessing methods for better results
+                    ocr_results = []
+                    
+                    # Method 1: Grayscale + OTSU thresholding (original)
+                    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+                    _, thresh1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    text1 = pytesseract.image_to_string(thresh1, lang='eng', config='--psm 6')
+                    if text1 and len(text1.strip()) > 0:
+                        ocr_results.append(('otsu', text1))
+                    
+                    # Method 2: Adaptive thresholding (better for varying lighting)
+                    adaptive = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+                    text2 = pytesseract.image_to_string(adaptive, lang='eng', config='--psm 6')
+                    if text2 and len(text2.strip()) > 0:
+                        ocr_results.append(('adaptive', text2))
+                    
+                    # Method 3: Denoised + thresholded (better for screenshots)
+                    denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+                    _, thresh3 = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    text3 = pytesseract.image_to_string(thresh3, lang='eng', config='--psm 6')
+                    if text3 and len(text3.strip()) > 0:
+                        ocr_results.append(('denoised', text3))
+                    
+                    # Method 4: Original grayscale (sometimes works better)
+                    text4 = pytesseract.image_to_string(gray, lang='eng', config='--psm 6')
+                    if text4 and len(text4.strip()) > 0:
+                        ocr_results.append(('grayscale', text4))
+                    
+                    # Method 5: Upscaled image (better for small text)
+                    scale_factor = 2
+                    upscaled = cv2.resize(gray, (width * scale_factor, height * scale_factor), interpolation=cv2.INTER_CUBIC)
+                    _, thresh5 = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    text5 = pytesseract.image_to_string(thresh5, lang='eng', config='--psm 6')
+                    if text5 and len(text5.strip()) > 0:
+                        ocr_results.append(('upscaled', text5))
+                    
+                    # Choose the result with most text (usually most accurate)
+                    if ocr_results:
+                        ocr_results.sort(key=lambda x: len(x[1]), reverse=True)
+                        best_method, ocr_text = ocr_results[0]
+                        logger.info(f"Real OCR extracted {len(ocr_text)} characters using Tesseract (method: {best_method})")
+                        logger.info(f"OCR text preview (first 500 chars): {ocr_text[:500]}")
+                    else:
+                        # Last resort: try original image with different PSM modes
+                        for psm_mode in ['6', '11', '12', '3']:
+                            try:
+                                text = pytesseract.image_to_string(image, lang='eng', config=f'--psm {psm_mode}')
+                                if text and len(text.strip()) > 0:
+                                    ocr_text = text
+                                    logger.info(f"Real OCR extracted {len(ocr_text)} characters using PSM mode {psm_mode}")
+                                    break
+                            except:
+                                continue
+                else:
+                    # Fallback: use PIL image directly with multiple PSM modes
+                    for psm_mode in ['6', '11', '12', '3']:
+                        try:
+                            text = pytesseract.image_to_string(image, lang='eng', config=f'--psm {psm_mode}')
+                            if text and len(text.strip()) > 0:
+                                ocr_text = text
+                                logger.info(f"Real OCR extracted {len(ocr_text)} characters using Tesseract (PSM {psm_mode}, no preprocessing)")
+                                break
+                        except:
+                            continue
+                            
+            except Exception as ocr_error:
+                logger.warning(f"Tesseract OCR failed: {ocr_error}. Falling back to simulated OCR.")
+                logger.error(f"OCR error details: {str(ocr_error)}", exc_info=True)
+                ocr_text = ""
+        
+        # Log OCR result
+        if ocr_text:
+            logger.info(f"✅ OCR Success: Extracted {len(ocr_text)} characters")
+            logger.info(f"OCR contains 'followers': {'followers' in ocr_text.lower()}")
+            logger.info(f"OCR contains 'following': {'following' in ocr_text.lower()}")
+            logger.info(f"OCR contains 'posts': {'posts' in ocr_text.lower()}")
+        else:
+            logger.warning("❌ OCR failed or returned empty text")
+        
+        # If real OCR failed or not available, use fallback
+        if not ocr_text or len(ocr_text.strip()) < 10:
+            logger.info("Using fallback OCR simulation (real OCR not available or failed)")
+            # Simulate OCR extraction with realistic data
+            # In production, use Tesseract, EasyOCR, or Google Vision API
         
         extracted_data = {}
         
@@ -187,42 +333,40 @@ def extract_transaction_data(image: Image.Image) -> tuple[str, dict]:
                 amount = np.random.randint(100, 99999)
                 merchant_id = np.random.randint(1000, 9999)
                 
-                # Generate UTR - 80% chance of suspicious pattern (for better demo)
-                if np.random.random() < 0.8:
-                    # Suspicious patterns (repeated digits, sequential)
+                # Generate UTR - DEFAULT TO LEGITIMATE (only 20% suspicious for demo)
+                if np.random.random() < 0.2:
+                    # Suspicious patterns (repeated digits, sequential) - only for demo
                     suspicious_utrs = [
                         "111111111111",
                         "123456789012",
                         "000000000000",
                         "999999999999",
-                        "222222222222",
-                        "333333333333",
-                        f"{merchant_id}{merchant_id}{merchant_id}",
                     ]
                     utr = int(np.random.choice(suspicious_utrs))
                 else:
-                    # Legitimate random UTR
+                    # Legitimate random UTR (most common case)
                     utr = np.random.randint(100000000000, 999999999999)
                 
-                # Simulate different types of UPI IDs - MORE LIKELY TO BE SUSPICIOUS
-                # For demo/hackathon: Make 60% suspicious to show detection works
+                # Simulate different types of UPI IDs - DEFAULT TO LEGITIMATE
+                # Only generate suspicious patterns occasionally (20% for demo)
                 suspicious_patterns = [
                     "test123@paytm",
                     "fake456@phonepe",
                     "123456@googlepay",
                     "dummy789@upi",
                     "scam@paytm",
-                    f"test{merchant_id}@paytm",
-                    f"fake{merchant_id}@phonepe",
                 ]
                 legitimate_patterns = [
                     f"merchant{merchant_id}@paytm",
-                    f"{merchant_id}@phonepe",
-                    f"vendor{merchant_id}@googlepay",
-                    f"{merchant_id}@ybl",
+                    f"shop{merchant_id}@phonepe",
+                    f"store{merchant_id}@googlepay",
+                    f"business{merchant_id}@ybl",
+                    f"vendor{merchant_id}@paytm",
+                    f"retailer{merchant_id}@phonepe",
+                    f"user{merchant_id}@googlepay",
                 ]
-                # 80% chance of suspicious UPI ID (for better demo/fraud detection)
-                if np.random.random() < 0.8:
+                # 20% chance of suspicious UPI ID (for demo), 80% legitimate
+                if np.random.random() < 0.2:
                     upi_id = np.random.choice(suspicious_patterns)
                 else:
                     upi_id = np.random.choice(legitimate_patterns)
@@ -302,6 +446,32 @@ def extract_transaction_data(image: Image.Image) -> tuple[str, dict]:
                 f"Image: {width}x{height}px"
             )
         
+        # If we got real OCR text from Tesseract, ALWAYS return it (even if short)
+        # Don't filter - let backend parse it (it might contain numbers even without labels)
+        # Instagram screenshots might have short OCR text but still contain important keywords
+        if ocr_text and len(ocr_text.strip()) > 0 and TESSERACT_AVAILABLE:
+            # Real OCR text extracted - return it as-is
+            # Backend will extract numbers from it
+            logger.info(f"✅ Real OCR text extracted: {len(ocr_text)} chars")
+            logger.info(f"OCR text preview: {ocr_text[:500]}")
+            extracted_data = {
+                'amount': 0.0,
+                'upi_id': '',
+                'transaction_id': '',
+                'date': '',
+                'status': 'OCR_EXTRACTED',
+                'merchant': '',
+                'confidence': 'high'
+            }
+            return ocr_text, extracted_data
+        
+        # If OCR text exists but Tesseract wasn't available, still return it
+        if ocr_text and len(ocr_text.strip()) > 0:
+            logger.info(f"✅ OCR text available (non-Tesseract): {len(ocr_text)} chars")
+            return ocr_text, extracted_data
+        
+        # Only fall back to simulated data if OCR completely failed
+        logger.warning("OCR completely failed - using fallback simulation")
         return ocr_text, extracted_data
     
     except Exception as e:
@@ -792,9 +962,8 @@ def _legacy_analyze_forgery(image: Image.Image) -> tuple[float, str, float]:
             edit_indicators.append("No editing indicators detected - Image appears original")
     
     # Special handling for screenshots
-    if is_likely_screenshot and is_edited and edit_score < 80:
-        # For screenshots, only flag if edit_score is VERY high (80+)
-        # Otherwise, treat as original
+    if is_likely_screenshot and is_edited and edit_score < 80 and not edit_indicators:
+        # Only override when no concrete edit indicators were logged.
         logger.info(f"📱 Screenshot with low edit score ({edit_score:.1f}) - Treating as ORIGINAL")
         is_edited = False
         edit_confidence = 0.85  # High confidence it's original
@@ -1047,7 +1216,7 @@ def build_deepfake_cnn_model(input_shape=(224, 224, 3)):
     Build a CNN model for deepfake detection
     Uses transfer learning approach for better accuracy
     """
-    if not TENSORFLOW_AVAILABLE:
+    if not _load_tensorflow():
         logger.warning("TensorFlow not available. CNN model disabled.")
         return None
     
@@ -1083,7 +1252,7 @@ def generate_gradcam_heatmap(model, img_array, layer_name='block_16_expand'):
     Generate Grad-CAM heatmap showing which pixels indicate manipulation
     Returns: heatmap as numpy array (0-255)
     """
-    if not TENSORFLOW_AVAILABLE:
+    if not _load_tensorflow():
         return None
     
     try:
@@ -1328,7 +1497,7 @@ def detect_deepfake_image(image: Image.Image) -> dict:
             all_indicators.extend(meta_indicators)
         
         # ===== DEEP LEARNING AI MODEL =====
-        if TENSORFLOW_AVAILABLE:
+        if _load_tensorflow():
             try:
                 # Build or load CNN model
                 cnn_model = build_deepfake_cnn_model()
@@ -2021,17 +2190,20 @@ def detect_deepfake_video(video_path: str) -> dict:
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint - responds immediately without loading heavy dependencies"""
     try:
-        # Check if critical dependencies are available
+        # Quick health check - don't load TensorFlow unless specifically needed
+        # Service is healthy if it can respond, even if some features aren't loaded yet
         checks = {
             "status": "healthy",
             "service": "ml-service",
+            "ready": True,
+            "core_features": "available",  # Forensics and validation are always available
             "dependencies": {
                 "opencv": CV2_AVAILABLE,
                 "scikit-image": SKIMAGE_AVAILABLE,
                 "librosa": LIBROSA_AVAILABLE,
-                "tensorflow": TENSORFLOW_AVAILABLE,
+                "tensorflow": "lazy_loaded",  # Loaded on-demand
                 "matplotlib": MATPLOTLIB_AVAILABLE,
             }
         }
@@ -2176,32 +2348,66 @@ async def analyze_image(request: ImageAnalysisRequest):
             edit_confidence = min(0.9, 0.5 + (forgery_score / 200))
             edit_indicators = ["High forgery score indicates possible editing"]
         
-        # Validate transaction data
+        # Validate transaction data - IMPROVED LOGIC
         transaction_validation = {}
         fraud_detected = False
         fraud_indicators = []
         
         if extracted_data and ('amount' in extracted_data or 'upi_id' in extracted_data):
+            # Always run transaction validation if we have transaction data
             transaction_validation = comprehensive_transaction_validation(extracted_data)
             fraud_detected = transaction_validation.get('fraud_detected', False)
             fraud_indicators = transaction_validation.get('fraud_indicators', [])
+            risk_score = transaction_validation.get('overall_risk_score', 0)
+            transaction_verdict = transaction_validation.get('verdict', 'UNKNOWN')
             
-            # If transaction validation detects fraud, SIGNIFICANTLY increase forgery score
+            logger.info(f"Transaction validation: fraud_detected={fraud_detected}, risk_score={risk_score}, verdict={transaction_verdict}")
+            
+            # PRIORITIZE TRANSACTION DATA OVER IMAGE ANALYSIS
+            # If transaction data is LEGITIMATE, trust it over image forensics
+            if transaction_verdict == 'LEGITIMATE' and risk_score < 15:
+                # Transaction data is legitimate - REDUCE image forensics suspicion
+                logger.info(f"✅ Transaction data is LEGITIMATE - Reducing image forensics suspicion")
+                if verdict in ['suspicious', 'tampered']:
+                    # If image says suspicious but transaction is legitimate, trust transaction
+                    forgery_score = max(0, forgery_score - 20)  # Reduce forgery score
+                    if verdict == 'tampered' and forgery_score < 40:
+                        verdict = 'suspicious'  # Downgrade from tampered
+                    elif verdict == 'suspicious' and forgery_score < 20:
+                        verdict = 'clean'  # Downgrade to clean
+                    confidence = max(0.3, confidence - 0.2)  # Reduce confidence in image analysis
+                    is_edited = False  # Trust transaction data - mark as not edited
+                    edit_confidence = max(0.2, edit_confidence - 0.3)  # Reduce edit confidence
+                    logger.info(f"✅ Transaction legitimacy overrides image suspicion - verdict: {verdict}")
+            
+            # If transaction validation detects fraud, this is PRIMARY indicator
             if fraud_detected:
-                # Add transaction risk score to forgery score (weighted)
+                # Transaction data indicates fraud - THIS IS DEFINITIVE
                 transaction_risk = transaction_validation.get('overall_risk_score', 0)
-                forgery_score = max(forgery_score, transaction_risk * 0.8)  # 80% weight
+                forgery_score = max(forgery_score, transaction_risk * 0.9)  # 90% weight on transaction data
                 # Force verdict to tampered if fraud detected
                 if verdict in ['clean', 'suspicious']:
                     verdict = 'tampered'
-                    confidence = min(1.0, confidence + 0.2)  # Increase confidence
-            elif transaction_validation.get('overall_risk_score', 0) >= 30:
-                # Suspicious transaction data
-                forgery_score += 20
+                    confidence = min(1.0, confidence + 0.3)  # Increase confidence significantly
+                logger.warning(f"🚨 FRAUD DETECTED in transaction data - Overriding image analysis verdict")
+            elif risk_score >= 30:
+                # Suspicious transaction data - increase suspicion
+                forgery_score += min(25, risk_score * 0.5)  # Add up to 25 points
                 if verdict == 'clean':
                     verdict = 'suspicious'
+                    confidence = min(0.85, confidence + 0.15)
+                logger.info(f"⚠️ Suspicious transaction data detected (risk_score={risk_score})")
+            elif risk_score >= 15:
+                # Some concerns but not definitive
+                forgery_score += min(10, risk_score * 0.3)  # Add up to 10 points
+                logger.info(f"ℹ️ Transaction data has some concerns (risk_score={risk_score})")
+            else:
+                # Transaction data looks legitimate - this supports clean verdict
+                if verdict == 'clean':
+                    confidence = min(1.0, confidence + 0.1)  # Increase confidence for legitimate transactions
+                logger.info(f"✅ Transaction data appears legitimate (risk_score={risk_score})")
         
-        logger.info(f"Analysis complete: verdict={verdict}, forgery_score={forgery_score:.2f}, fraud_detected={fraud_detected}, is_edited={is_edited}")
+        logger.info(f"Analysis complete: verdict={verdict}, forgery_score={forgery_score:.2f}, fraud_detected={fraud_detected}, is_edited={is_edited}, transaction_risk={transaction_validation.get('overall_risk_score', 0) if transaction_validation else 0}")
         
         return ImageAnalysisResponse(
             ocrText=ocr_text,
@@ -2627,9 +2833,9 @@ def spam_call_detection(audio_data: np.ndarray, sr: int) -> tuple[float, List[st
     return min(score, 50), spam_indicators
 
 
-def detect_voice_deepfake(audio_path: str) -> dict:
+def _detect_voice_deepfake_impl(audio_path: str) -> dict:
     """
-    Comprehensive voice deepfake and spam detection
+    Comprehensive voice deepfake and spam detection (internal implementation)
     Uses multiple audio analysis methods for maximum accuracy
     """
     deepfake_score = 0.0
@@ -2639,9 +2845,18 @@ def detect_voice_deepfake(audio_path: str) -> dict:
     confidence = 0.5
     
     try:
-        logger.info(f"Loading audio file: {audio_path}")
-        # Load audio file
-        audio_data, sr = librosa.load(audio_path, sr=None, duration=60)  # Max 60 seconds
+        # Use absolute path for Windows compatibility
+        abs_audio_path = os.path.abspath(audio_path)
+        logger.info(f"Loading audio file: {abs_audio_path}")
+        
+        # Verify file exists before loading
+        if not os.path.exists(abs_audio_path):
+            raise Exception(f"Audio file does not exist: {abs_audio_path}")
+        if not os.path.isfile(abs_audio_path):
+            raise Exception(f"Path is not a file: {abs_audio_path}")
+        
+        # Load audio file with absolute path
+        audio_data, sr = librosa.load(abs_audio_path, sr=None, duration=60)  # Max 60 seconds
         
         if len(audio_data) == 0:
             logger.error("Audio file is empty or could not be loaded")
@@ -2883,20 +3098,23 @@ def detect_voice_deepfake(audio_path: str) -> dict:
             }
         }
         
+    except FileNotFoundError as e:
+        logger.error(f"Audio file not found: {e}")
+        raise Exception(f"Audio file not found: {str(e)}")
+    except librosa.util.exceptions.NoBackendError as e:
+        logger.error(f"librosa backend error: {e}")
+        raise Exception(f"Audio processing backend error. Please ensure librosa and soundfile are installed: pip install librosa soundfile")
     except Exception as e:
         logger.error(f"Voice deepfake detection error: {e}", exc_info=True)
         import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return {
-            "isDeepfake": False,
-            "deepfakeScore": 0.0,
-            "confidence": 0.0,
-            "verdict": "unknown",
-            "detectionMethods": [],
-            "indicators": [f"Detection error: {str(e)}"],
-            "spamIndicators": [],
-            "technicalDetails": {}
-        }
+        error_trace = traceback.format_exc()
+        logger.error(f"Traceback: {error_trace}")
+        
+        # Re-raise as Exception so outer handler can catch it properly
+        error_msg = str(e)
+        if len(error_msg) > 200:
+            error_msg = error_msg[:200] + "..."
+        raise Exception(f"Voice detection failed: {error_msg}")
 
 
 @app.post("/api/deepfake/detect", response_model=DeepfakeDetectionResponse)
@@ -3034,66 +3252,330 @@ async def detect_voice_deepfake(request: VoiceDeepfakeDetectionRequest):
         else:
             raise HTTPException(status_code=400, detail="Unsupported format. Use base64")
         
-        # Save to temp file
-        temp_path = tempfile.mktemp(suffix='.wav')
+        # Save to temp file - Use direct file write for better Windows compatibility
+        import tempfile as tf
+        import uuid
+        import time
+        
+        temp_dir = tf.gettempdir()
+        logger.info(f"Using temp directory: {temp_dir}")
+        
+        # Create unique filename to avoid conflicts
+        unique_id = str(uuid.uuid4())
+        temp_path = os.path.join(temp_dir, f"voice_audio_{unique_id}.wav")
+        logger.info(f"Creating temp file at: {temp_path}")
+        
         try:
+            # Write audio data directly to file (more reliable on Windows)
             with open(temp_path, 'wb') as f:
                 f.write(audio_data)
+                f.flush()
+                os.fsync(f.fileno())  # Force write to disk on Windows
             
-            logger.info(f"Saved audio to temp file: {temp_path}")
+            # Wait for Windows file system to update
+            time.sleep(0.2)
+            
+            # Verify file was created and has content
+            if not os.path.exists(temp_path):
+                raise HTTPException(status_code=500, detail=f"Failed to create temporary audio file at: {temp_path}")
+            
+            if not os.path.isfile(temp_path):
+                raise HTTPException(status_code=500, detail=f"Temporary path is not a file: {temp_path}")
+            
+            file_size = os.path.getsize(temp_path)
+            logger.info(f"Saved audio to temp file: {temp_path} ({file_size} bytes)")
+            
+            if file_size == 0:
+                # Clean up empty file
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+                raise HTTPException(status_code=400, detail="Audio file is empty (0 bytes). Please check the file and try again.")
+            
+            # Final verification - check file is readable
+            if not os.access(temp_path, os.R_OK):
+                raise HTTPException(status_code=500, detail=f"Temporary file is not readable: {temp_path}")
             
             # Try to load and convert if needed
+            audio_loaded = False
+            last_error_msg = None
+            
+            # Verify file one more time before processing
+            if not os.path.exists(temp_path):
+                raise HTTPException(status_code=500, detail=f"Temporary file disappeared: {temp_path}")
+            
             try:
                 # Try loading with librosa (handles many formats)
                 if LIBROSA_AVAILABLE:
-                    audio_array, sr = librosa.load(temp_path, sr=None, duration=60)
-                    logger.info(f"Loaded audio with librosa: {len(audio_array)} samples, {sr} Hz sample rate")
-                    # Save as WAV for consistent processing
-                    if 'sf' in globals():
-                        sf.write(temp_path, audio_array, sr)
+                    try:
+                        logger.info(f"Attempting librosa load from: {temp_path}")
+                        # Verify file exists and is readable
+                        if not os.path.exists(temp_path):
+                            raise Exception(f"File does not exist: {temp_path}")
+                        if not os.path.isfile(temp_path):
+                            raise Exception(f"Path is not a file: {temp_path}")
+                        if not os.access(temp_path, os.R_OK):
+                            raise Exception(f"File is not readable: {temp_path}")
+                        
+                        # Try loading with librosa - use absolute path for Windows
+                        abs_path = os.path.abspath(temp_path)
+                        logger.info(f"Loading with librosa from absolute path: {abs_path}")
+                        audio_array, sr = librosa.load(abs_path, sr=None, duration=60)
+                        if len(audio_array) > 0:
+                            logger.info(f"Loaded audio with librosa: {len(audio_array)} samples, {sr} Hz sample rate")
+                            # Save as WAV for consistent processing if soundfile is available
+                            if SOUNDFILE_AVAILABLE:
+                                try:
+                                    import soundfile as sf
+                                    sf.write(temp_path, audio_array, sr)
+                                    logger.info("Converted audio to WAV format")
+                                except Exception as sf_error:
+                                    logger.warning(f"Could not save as WAV: {sf_error}, continuing with original")
+                            audio_loaded = True
+                        else:
+                            raise Exception("Audio file is empty after loading")
+                    except Exception as librosa_error:
+                        logger.warning(f"librosa load failed: {librosa_error}, trying pydub")
+                        raise librosa_error
                 else:
                     raise Exception("librosa not available")
             except Exception as e:
                 logger.warning(f"librosa load failed: {e}, trying pydub")
                 # If librosa fails, try pydub
-                try:
-                    if 'AudioSegment' in globals():
-                        audio = AudioSegment.from_file(temp_path)
-                        audio.export(temp_path, format="wav")
-                        logger.info("Converted audio with pydub")
-                    else:
-                        raise Exception("pydub not available")
-                except Exception as e2:
-                    logger.error(f"Audio conversion failed: {e2}")
-                    raise HTTPException(status_code=400, detail=f"Could not process audio file: {str(e2)}")
+                if not audio_loaded:
+                    try:
+                        if PYDUB_AVAILABLE:
+                            from pydub import AudioSegment
+                            logger.info(f"Attempting pydub conversion from: {temp_path}")
+                            # Verify file exists before pydub
+                            if not os.path.exists(temp_path):
+                                raise Exception(f"File does not exist for pydub: {temp_path}")
+                            if not os.path.isfile(temp_path):
+                                raise Exception(f"Path is not a file for pydub: {temp_path}")
+                            
+                            # Load with pydub - use absolute path
+                            abs_path = os.path.abspath(temp_path)
+                            logger.info(f"Loading with pydub from absolute path: {abs_path}")
+                            audio = AudioSegment.from_file(abs_path)
+                            
+                            # Export to a new temp file first, then replace (safer for Windows)
+                            import tempfile as tf
+                            import uuid
+                            temp_wav_path = os.path.join(tf.gettempdir(), f"voice_audio_conv_{uuid.uuid4()}.wav")
+                            
+                            logger.info(f"Exporting converted audio to: {temp_wav_path}")
+                            audio.export(temp_wav_path, format="wav")
+                            
+                            # Wait for Windows file system
+                            import time
+                            time.sleep(0.3)
+                            
+                            # Verify converted file exists
+                            if os.path.exists(temp_wav_path) and os.path.getsize(temp_wav_path) > 0:
+                                # Replace original with converted
+                                if os.path.exists(temp_path):
+                                    try:
+                                        os.remove(temp_path)
+                                        time.sleep(0.1)  # Wait after delete
+                                    except Exception as rm_err:
+                                        logger.warning(f"Could not remove original temp file: {rm_err}")
+                                
+                                # Use absolute paths for rename
+                                abs_old = os.path.abspath(temp_path) if os.path.exists(temp_path) else None
+                                abs_new = os.path.abspath(temp_wav_path)
+                                
+                                if abs_old and os.path.exists(abs_old):
+                                    os.remove(abs_old)
+                                    time.sleep(0.1)
+                                
+                                os.rename(abs_new, abs_path)
+                                temp_path = abs_path  # Update to absolute path
+                                time.sleep(0.1)  # Wait after rename
+                                
+                                logger.info("Converted audio with pydub to WAV format")
+                                
+                                # After pydub conversion, try loading with librosa
+                                if LIBROSA_AVAILABLE:
+                                    try:
+                                        if not os.path.exists(temp_path):
+                                            raise Exception(f"File missing after pydub conversion: {temp_path}")
+                                        # Use absolute path for librosa after pydub conversion
+                                        abs_path_after_conv = os.path.abspath(temp_path)
+                                        logger.info(f"Loading converted file with librosa: {abs_path_after_conv}")
+                                        audio_array, sr = librosa.load(abs_path_after_conv, sr=None, duration=60)
+                                        if len(audio_array) > 0:
+                                            logger.info(f"Successfully loaded after pydub conversion: {len(audio_array)} samples")
+                                            audio_loaded = True
+                                        else:
+                                            raise Exception("Audio still empty after pydub conversion")
+                                    except Exception as load_error:
+                                        logger.error(f"Failed to load after pydub conversion: {load_error}")
+                                        raise Exception(f"pydub converted but librosa load failed: {str(load_error)}")
+                                else:
+                                    audio_loaded = True  # pydub conversion succeeded, assume it's valid
+                            else:
+                                raise Exception("pydub conversion failed - output file not created or is empty")
+                        else:
+                            raise Exception("pydub not available")
+                    except Exception as e2:
+                        logger.error(f"Audio conversion failed with pydub: {e2}")
+                        # pydub failed, but we already tried librosa, so this is the final error
+                        import traceback
+                        full_error = traceback.format_exc()
+                        logger.error(f"Full traceback: {full_error}")
+                        error_msg = str(e2)
+                        if len(error_msg) > 200:
+                            error_msg = error_msg[:200] + "..."
+                        error_detail = (
+                            f"Could not process audio file.\n\n"
+                            f"Tried:\n"
+                            f"1. librosa direct load\n"
+                            f"2. pydub conversion then librosa\n\n"
+                            f"Last error: {error_msg}\n\n"
+                            f"Please ensure:\n"
+                            f"- Audio file is not corrupted\n"
+                            f"- File format is supported (MP3, WAV, M4A, FLAC, OGG, AAC)\n"
+                            f"- File size is reasonable (< 50MB)\n"
+                            f"- Try converting to WAV format first"
+                        )
+                        raise HTTPException(status_code=400, detail=error_detail)
+            
+            if not audio_loaded:
+                # Check file size for more context
+                file_size_mb = os.path.getsize(temp_path) / (1024 * 1024) if os.path.exists(temp_path) else 0
+                error_detail = (
+                    f"Could not load audio file.\n\n"
+                    f"File size: {file_size_mb:.2f} MB\n"
+                    f"File may be corrupted or in unsupported format.\n\n"
+                    f"Supported formats: MP3, WAV, M4A, FLAC, OGG, AAC, AMR, 3GPP\n\n"
+                    f"Please try:\n"
+                    f"- Converting to WAV format\n"
+                    f"- Using a different audio file\n"
+                    f"- Checking if file is corrupted\n"
+                    f"- Ensure file is a valid audio file"
+                )
+                raise HTTPException(status_code=400, detail=error_detail)
             
             logger.info("Starting voice deepfake detection...")
-            result = detect_voice_deepfake(temp_path)
+            
+            # Convert to absolute path before passing to detection function
+            abs_temp_path = os.path.abspath(temp_path)
+            logger.info(f"Calling detection with absolute path: {abs_temp_path}")
+            
+            # Verify file still exists before detection
+            if not os.path.exists(abs_temp_path):
+                raise HTTPException(status_code=500, detail=f"Temp file disappeared before detection: {abs_temp_path}")
+            
+            # Call the internal implementation function (not the async endpoint)
+            try:
+                result = _detect_voice_deepfake_impl(abs_temp_path)
+            except Exception as impl_error:
+                logger.error(f"Detection implementation failed: {impl_error}", exc_info=True)
+                error_msg = str(impl_error)
+                if "librosa" in error_msg.lower() or "backend" in error_msg.lower():
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Audio processing error. Please ensure librosa and soundfile are installed: pip install librosa soundfile"
+                    )
+                elif "not found" in error_msg.lower() or "does not exist" in error_msg.lower():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Audio file error: {error_msg}"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Voice detection failed: {error_msg}"
+                    )
+            
+            # Verify result is a dict, not a coroutine
+            if not isinstance(result, dict):
+                logger.error(f"detect_voice_deepfake returned non-dict: {type(result)}")
+                raise HTTPException(status_code=500, detail=f"Internal error: detection function returned invalid type: {type(result)}")
+            
             logger.info(f"Detection complete: verdict={result.get('verdict')}, score={result.get('deepfakeScore')}")
             
-            # Clean up
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            # Clean up temp file
+            try:
+                if 'temp_path' in locals() and os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    logger.info(f"Cleaned up temp file: {temp_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
             
             return VoiceDeepfakeDetectionResponse(**result)
             
         except HTTPException:
             raise
         except Exception as e:
-            # Clean up on error
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
+            # Clean up temp file on error
+            try:
+                if 'temp_path' in locals() and temp_path:
+                    abs_cleanup_path = os.path.abspath(temp_path) if os.path.exists(temp_path) else temp_path
+                    if os.path.exists(abs_cleanup_path):
+                        os.remove(abs_cleanup_path)
+                        logger.info(f"Cleaned up temp file after error: {abs_cleanup_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp file after error: {cleanup_error}")
             logger.error(f"Error processing audio: {e}", exc_info=True)
-            raise HTTPException(status_code=400, detail=f"Invalid audio data: {str(e)}")
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"Full traceback: {error_trace}")
+            
+            # Check if it's a coroutine error
+            error_str = str(e)
+            if 'coroutine' in error_str.lower():
+                error_detail = (
+                    f"Audio processing error (code issue detected).\n\n"
+                    f"Error: {error_str}\n\n"
+                    f"This appears to be a code issue. Please:\n"
+                    f"- Try a different audio file\n"
+                    f"- Restart the ML service\n"
+                    f"- Check ML service logs for details"
+                )
+            else:
+                error_detail = (
+                    f"Invalid audio data: {error_str}\n\n"
+                    f"Please ensure:\n"
+                    f"- Audio file is not corrupted\n"
+                    f"- File format is supported (MP3, WAV, M4A, FLAC, OGG, AAC)\n"
+                    f"- File size is reasonable (< 50MB)"
+                )
+            raise HTTPException(status_code=400, detail=error_detail)
             
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Voice deepfake detection error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Detection failed: {str(e)}")
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"Full traceback: {error_trace}")
+        
+        # Provide more helpful error messages and handle specific errors
+        error_message = str(e)
+        
+        # Check for specific error types
+        if "librosa" in error_message.lower():
+            detail = "Audio processing error: librosa is required but not available. Please install: pip install librosa soundfile"
+            raise HTTPException(status_code=503, detail=detail)
+        elif "audio" in error_message.lower() and ("format" in error_message.lower() or "codec" in error_message.lower()):
+            detail = f"Unsupported audio format: {error_message}. Please convert to WAV, MP3, or M4A format."
+            raise HTTPException(status_code=400, detail=detail)
+        elif "timeout" in error_message.lower():
+            detail = f"Processing timeout: {error_message}. Audio file may be too large or complex. Try a shorter audio file."
+            raise HTTPException(status_code=408, detail=detail)
+        elif "file" in error_message.lower() and ("not found" in error_message.lower() or "does not exist" in error_message.lower()):
+            detail = f"Audio file error: {error_message}. Please ensure the file is valid and try again."
+            raise HTTPException(status_code=400, detail=detail)
+        elif "memory" in error_message.lower() or "out of memory" in error_message.lower():
+            detail = f"Memory error: {error_message}. Audio file may be too large. Try a smaller file."
+            raise HTTPException(status_code=413, detail=detail)
+        else:
+            # For unknown errors, provide generic message but don't expose internal details
+            detail = f"Voice detection failed. Please ensure the audio file is valid and try again. If the problem persists, check ML service logs."
+            logger.error(f"Unknown error in voice detection: {error_message}")
+            raise HTTPException(status_code=500, detail=detail)
 
 
 if __name__ == "__main__":

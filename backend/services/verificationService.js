@@ -284,19 +284,74 @@ export const verifySSLCertificate = async (url) => {
         const now = new Date();
         const daysUntilExpiry = (expiryDate - now) / (1000 * 60 * 60 * 24);
         
-        // Check certificate issuer
-        const issuer = cert.issuer?.CN || '';
-        const isTrustedIssuer = /Let's Encrypt|DigiCert|GlobalSign|GoDaddy|Comodo|Sectigo|Amazon/i.test(issuer);
+        // Check certificate issuer - EXPANDED trusted issuer list
+        const issuer = cert.issuer?.CN || cert.issuer?.O || '';
+        // Include more trusted CAs including Google Trust Services, etc.
+        const isTrustedIssuer = /Let's Encrypt|DigiCert|GlobalSign|GoDaddy|Comodo|Sectigo|Amazon|Google Trust Services|Google Internet Authority|Thawte|VeriSign|Entrust|RapidSSL|GeoTrust|Trustwave|StartCom|Buypass|AC Camerfirma|Actalis|AffirmTrust|Certinomis|Certum|CFCA|Chambers of Commerce Root|China Internet Network Information Center|COMODO|Cybertrust|Deutsche Telekom|D-Trust|ePKI Root Certification Authority|GlobalSign|Go Daddy|GTE CyberTrust|Hellenic Academic and Research Institutions|Hongkong Post|IdenTrust|Internet Security Research Group|Let's Encrypt|Network Solutions|QuoVadis|RSA Security|SecureTrust|SSL.com|SwissSign|Symantec|TrustCor|Trustwave|TWCA|Unizeto|USERTrust|Verisign|Wells Fargo|WoSign|Xramp/i.test(issuer);
         
         // Check subject (should match domain)
+        // Also check subjectAltName for better wildcard support
         const subject = cert.subject?.CN || '';
-        const domainMatches = subject === hostname || subject === `*.${hostname.split('.').slice(1).join('.')}`;
+        const subjectAltNames = cert.subjectaltname || '';
         
-        const isValid = daysUntilExpiry > 0 && isTrustedIssuer && domainMatches;
+        // Check exact match
+        let domainMatches = subject === hostname;
+        
+        // Check wildcard match (e.g., *.google.com matches www.google.com)
+        if (!domainMatches && subject.startsWith('*.')) {
+          const baseDomain = subject.replace('*.', '');
+          const hostnameBase = hostname.split('.').slice(-baseDomain.split('.').length).join('.');
+          domainMatches = hostnameBase === baseDomain;
+        }
+        
+        // Check if hostname ends with subject (for subdomain matching)
+        if (!domainMatches && subject && !subject.startsWith('*')) {
+          domainMatches = hostname === subject || hostname.endsWith('.' + subject);
+        }
+        
+        // Check subjectAltName (common in modern certificates)
+        if (!domainMatches && subjectAltNames) {
+          const altNames = subjectAltNames.split(',').map(name => name.trim());
+          for (const altName of altNames) {
+            const cleanAltName = altName.replace(/^(DNS|IP):/, '').trim();
+            if (cleanAltName === hostname || 
+                (cleanAltName.startsWith('*.') && hostname.endsWith(cleanAltName.replace('*.', '.')))) {
+              domainMatches = true;
+              break;
+            }
+          }
+        }
+        
+        // IMPROVED LOGIC: Certificate is valid if:
+        // 1. Not expired AND
+        // 2. Domain matches (PRIMARY CHECK)
+        // For legitimate sites, if domain matches and cert is not expired, trust it
+        // The issuer check is secondary - browsers trust valid certs even if issuer not in our list
+        const certIsValid = daysUntilExpiry > 0 && domainMatches;
+        const hasTrustedIssuer = isTrustedIssuer;
+        
+        // If certificate is valid (not expired) and domain matches, it's valid
+        // Only flag as invalid if: expired OR domain mismatch
+        // Trust valid certs even if issuer not in our list (browsers do the same)
+        const isValid = certIsValid; // Trust any valid cert with matching domain
+        
+        // Determine confidence based on checks
+        let confidence = 1.0;
+        if (!certIsValid) {
+          // Certificate is invalid (expired or domain mismatch)
+          confidence = 0.95; // High confidence it's invalid
+        } else if (!hasTrustedIssuer) {
+          // Valid certificate but issuer not in our list - still valid, just lower confidence
+          // This is normal for many legitimate sites
+          confidence = 0.85; // Valid cert, but issuer unknown to us
+        } else {
+          // Valid certificate with trusted issuer
+          confidence = 1.0; // 100% confidence
+        }
         
         resolve({
           isValid,
-          confidence: isValid ? 1.0 : 0.95, // 100% if valid, 95% if invalid
+          confidence,
           source: 'ssl_certificate_validation',
           details: {
             issuer,
@@ -304,27 +359,29 @@ export const verifySSLCertificate = async (url) => {
             validUntil: cert.valid_to,
             daysUntilExpiry: Math.floor(daysUntilExpiry),
             domainMatches,
-            isTrustedIssuer,
+            isTrustedIssuer: hasTrustedIssuer,
           },
         });
       });
       
       req.on('error', (error) => {
+        // Connection errors don't necessarily mean invalid SSL
+        // Could be network issues, firewall, etc.
         resolve({
           isValid: false,
-          confidence: 1.0, // 100% sure - can't connect = invalid
+          confidence: 0.7, // Lower confidence - might be network issue
           source: 'ssl_connection_error',
           details: { reason: 'Cannot connect to verify SSL certificate', error: error.message },
         });
       });
       
-      req.setTimeout(5000, () => {
+      req.setTimeout(10000, () => {
         req.destroy();
         resolve({
           isValid: false,
-          confidence: 0.9,
+          confidence: 0.6, // Lower confidence - timeout might be network issue
           source: 'ssl_timeout',
-          details: { reason: 'SSL verification timeout' },
+          details: { reason: 'SSL verification timeout (may be network-related)' },
         });
       });
       

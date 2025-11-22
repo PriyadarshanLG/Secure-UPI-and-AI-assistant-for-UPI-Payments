@@ -73,18 +73,56 @@ const VoiceDetector = () => {
       console.error('Voice detection error:', err);
       
       let errorMessage = 'Failed to detect voice deepfake';
-      if (err.response?.data?.error) {
+      
+      // Check for network errors first
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        errorMessage = 'Request timeout. The audio file may be too large or the ML service is taking too long to process.';
+      } else if (err.code === 'ERR_NETWORK' || err.message === 'Network Error' || !err.response) {
+        errorMessage = 'Network Error: Cannot connect to backend server.\n\n' +
+                      'Please ensure:\n' +
+                      '1. Backend server is running (http://localhost:5000)\n' +
+                      '2. ML service is running (http://localhost:8000)\n\n' +
+                      'Start services:\n' +
+                      'Backend: .\\start-backend.bat\n' +
+                      'ML Service: .\\start-ml-service.bat';
+      } else if (err.response?.data?.error) {
         errorMessage = err.response.data.error;
+        // Include details if available
+        if (err.response.data.details) {
+          const details = Array.isArray(err.response.data.details)
+            ? err.response.data.details.join('\n')
+            : err.response.data.details;
+          errorMessage += '\n\n' + details;
+        }
       } else if (err.response?.data?.details) {
         errorMessage = Array.isArray(err.response.data.details)
-          ? err.response.data.details.join(', ')
+          ? err.response.data.details.join('\n')
           : err.response.data.details;
       } else if (err.response?.data?.message) {
         errorMessage = err.response.data.message;
+      } else if (err.response?.status === 503) {
+        errorMessage = 'ML Service Unavailable\n\n' +
+                      'The ML service is not running or librosa is not installed.\n\n' +
+                      'To fix:\n' +
+                      '1. Start ML service: .\\start-ml-service.bat\n' +
+                      '2. Install librosa: pip install librosa soundfile\n' +
+                      '3. Check service: http://localhost:8000/health';
+      } else if (err.response?.status === 400) {
+        errorMessage = 'Invalid audio file. Please ensure:\n' +
+                      '- File is a valid audio format (MP3, WAV, M4A, etc.)\n' +
+                      '- File is not corrupted\n' +
+                      '- File size is reasonable (< 10MB)';
+        if (err.response?.data?.details) {
+          errorMessage += '\n\n' + (Array.isArray(err.response.data.details) 
+            ? err.response.data.details.join('\n')
+            : err.response.data.details);
+        }
       } else if (err.message) {
         errorMessage = err.message;
       }
       
+      console.error('Voice detection error:', err);
+      console.error('Error response:', err.response?.data);
       setError(errorMessage);
     } finally {
       setTimeout(() => {

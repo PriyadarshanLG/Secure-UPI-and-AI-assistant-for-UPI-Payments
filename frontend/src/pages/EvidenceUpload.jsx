@@ -25,6 +25,58 @@ const EvidenceUpload = () => {
   const [useManualInput, setUseManualInput] = useState(false);
   const navigate = useNavigate();
 
+  // Determine whether authenticity analysis was limited (e.g., ML service offline)
+  const deriveImageStatus = (analysis) => {
+    if (!analysis) {
+      return {
+        limited: false,
+        hasEditSignals: false,
+        indicatorTexts: [],
+        mlUnavailableIndicator: false,
+      };
+    }
+
+    const indicatorTexts = Array.isArray(analysis.editIndicators)
+      ? analysis.editIndicators
+      : [];
+
+    const mlUnavailableIndicator = indicatorTexts.some(
+      (indicator) =>
+        typeof indicator === 'string' &&
+        indicator.toLowerCase().includes('ml service unavailable')
+    );
+
+    const limited = Boolean(
+      analysis.analysisLimited ||
+        analysis.mlServiceAvailable === false ||
+        mlUnavailableIndicator
+    );
+
+    const hasEditSignals =
+      !limited &&
+      (analysis.isEdited === true ||
+        (analysis.editConfidence && analysis.editConfidence > 0.5) ||
+        (analysis.forgeryScore && analysis.forgeryScore >= 40));
+
+    return {
+      limited,
+      hasEditSignals,
+      indicatorTexts,
+      mlUnavailableIndicator,
+    };
+  };
+
+  const analysisState = deriveImageStatus(result);
+
+  // Check if we have manual data (used for button enable/disable)
+  // Only count as valid if fields have non-empty, non-whitespace values
+  const hasManualData = Boolean(
+    (manualData.upiId && manualData.upiId.trim()) || 
+    (manualData.amount && manualData.amount.toString().trim()) || 
+    (manualData.referenceId && manualData.referenceId.trim()) || 
+    (manualData.merchantName && manualData.merchantName.trim())
+  );
+
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
@@ -41,10 +93,6 @@ const EvidenceUpload = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // Check if we have either a file OR manual data
-    const hasManualData = manualData.upiId || manualData.amount || 
-                         manualData.referenceId || manualData.merchantName;
     
     if (!file && !hasManualData) {
       setError('Please either upload a file OR enter transaction details manually');
@@ -76,19 +124,63 @@ const EvidenceUpload = () => {
       
       // Add manual data if at least one field is filled
       if (hasManualData) {
-        formData.append('manualData', JSON.stringify(manualData));
-      }
-      
-      // If no file, indicate manual-only mode
-      if (!file) {
-        formData.append('manualOnly', 'true');
+        // Only include non-empty fields in manual data
+        const cleanManualData = {};
+        if (manualData.upiId && manualData.upiId.trim()) {
+          cleanManualData.upiId = manualData.upiId.trim();
+        }
+        if (manualData.amount && manualData.amount.toString().trim()) {
+          cleanManualData.amount = manualData.amount.toString().trim();
+        }
+        if (manualData.referenceId && manualData.referenceId.trim()) {
+          cleanManualData.referenceId = manualData.referenceId.trim();
+        }
+        if (manualData.merchantName && manualData.merchantName.trim()) {
+          cleanManualData.merchantName = manualData.merchantName.trim();
+        }
+        
+        // Only add if we have at least one field
+        if (Object.keys(cleanManualData).length > 0) {
+          formData.append('manualData', JSON.stringify(cleanManualData));
+          
+          // If no file, indicate manual-only mode
+          if (!file) {
+            formData.append('manualOnly', 'true');
+          }
+        } else if (!file) {
+          // No file and no valid manual data - this shouldn't happen due to button disable
+          // but handle it gracefully
+          clearInterval(progressInterval);
+          setError('Please provide at least one transaction detail (UPI ID, Amount, or Reference ID)');
+          setUploading(false);
+          return;
+        }
+      } else if (!file) {
+        // No file and no manual data - this shouldn't happen due to button disable
+        clearInterval(progressInterval);
+        setError('Please either upload a file OR enter transaction details manually');
+        setUploading(false);
+        return;
       }
 
+      // Debug: Log what we're sending
       console.log('Submitting upload request...');
+      console.log('Has file:', !!file);
+      console.log('Has manual data:', hasManualData);
+      if (hasManualData) {
+        const cleanManualData = {};
+        if (manualData.upiId && manualData.upiId.trim()) cleanManualData.upiId = manualData.upiId.trim();
+        if (manualData.amount && manualData.amount.toString().trim()) cleanManualData.amount = manualData.amount.toString().trim();
+        if (manualData.referenceId && manualData.referenceId.trim()) cleanManualData.referenceId = manualData.referenceId.trim();
+        if (manualData.merchantName && manualData.merchantName.trim()) cleanManualData.merchantName = manualData.merchantName.trim();
+        console.log('Manual data to send:', cleanManualData);
+      }
+      
       const response = await api.post('/evidence/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        timeout: 60000, // 60 second timeout for large files and ML processing
       });
 
       clearInterval(progressInterval);
@@ -113,18 +205,50 @@ const EvidenceUpload = () => {
       console.error('Error response:', err.response);
       console.error('Error response data:', err.response?.data);
       
-      // Better error message formatting
+      // Better error message formatting - show actual backend error
       let errorMessage = 'Upload failed';
-      if (err.response?.data?.error) {
+      
+      // Check for network errors first
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        errorMessage = 'Request timeout. The server is taking too long to respond. Please try again.';
+      } else if (err.code === 'ERR_NETWORK' || err.message === 'Network Error' || !err.response) {
+        errorMessage = 'Network Error: Cannot connect to backend server.\n\n' +
+                      'Please start the backend server:\n' +
+                      'In PowerShell: .\\start-backend.bat\n' +
+                      'Or in CMD: start-backend.bat\n' +
+                      'Or manually: cd backend && npm start\n\n' +
+                      'The server should run on http://localhost:5000';
+      } else if (err.response?.data?.error) {
         errorMessage = err.response.data.error;
+        // Include details if available
+        if (err.response.data.details) {
+          errorMessage += ` (${err.response.data.details})`;
+        }
       } else if (err.response?.data?.errors && Array.isArray(err.response.data.errors)) {
-        errorMessage = err.response.data.errors.map(e => e.msg).join(', ');
+        errorMessage = err.response.data.errors.map(e => e.msg || e.message || String(e)).join(', ');
       } else if (err.response?.data?.message) {
         errorMessage = err.response.data.message;
+      } else if (err.response?.status === 400) {
+        errorMessage = 'Validation Error: Please check your input and try again';
+        if (err.response?.data?.details) {
+          errorMessage += ` - ${err.response.data.details}`;
+        }
+      } else if (err.response?.status === 401) {
+        errorMessage = 'Authentication required. Please log in again.';
+      } else if (err.response?.status === 403) {
+        errorMessage = 'Access denied. You do not have permission to perform this action.';
+      } else if (err.response?.status >= 500) {
+        errorMessage = 'Server error. Please try again later.';
+        if (err.response?.data?.details) {
+          errorMessage += ` - ${err.response.data.details}`;
+        }
       } else if (err.message) {
         errorMessage = err.message;
       }
       
+      console.error('Final error message:', errorMessage);
+      console.error('Error code:', err.code);
+      console.error('Error response status:', err.response?.status);
       setError(errorMessage);
     } finally {
       setTimeout(() => {
@@ -352,7 +476,7 @@ const EvidenceUpload = () => {
 
               <button
                 type="submit"
-                disabled={!file || uploading}
+                disabled={(!file && !hasManualData) || uploading}
                 className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold font-mono py-4 px-4 rounded-lg hover:shadow-2xl hover:shadow-cyan-500/50 focus:outline-none transition-all disabled:opacity-50 disabled:cursor-not-allowed border-2 border-cyan-400/50 group relative overflow-hidden"
               >
                 <span className="relative z-10 flex items-center justify-center space-x-2">
@@ -407,78 +531,84 @@ const EvidenceUpload = () => {
             <div className="p-8 space-y-6">
               {/* Image Status - Edited vs Original - PROMINENT DISPLAY (TOP PRIORITY) */}
               {/* Always show edit detection - use forgery score as fallback */}
-              {(
-                result.isEdited !== undefined || 
+              {(result.isEdited !== undefined || 
                 result.editConfidence !== undefined || 
                 result.forgeryScore !== undefined
               ) && (
                 <div className={`p-8 rounded-xl border-4 shadow-2xl ${
-                  (result.isEdited === true || 
-                   (result.editConfidence && result.editConfidence > 0.5) ||
-                   (result.forgeryScore && result.forgeryScore >= 40))
-                    ? 'bg-gradient-to-br from-red-900/40 via-red-800/30 to-red-900/40 border-red-500/80' 
-                    : 'bg-gradient-to-br from-green-900/40 via-green-800/30 to-green-900/40 border-green-500/80'
+                  analysisState.hasEditSignals
+                    ? 'bg-gradient-to-br from-red-900/40 via-red-800/30 to-red-900/40 border-red-500/80'
+                    : analysisState.limited
+                      ? 'bg-gradient-to-br from-yellow-900/40 via-yellow-800/30 to-yellow-900/40 border-yellow-500/80'
+                      : 'bg-gradient-to-br from-green-900/40 via-green-800/30 to-green-900/40 border-green-500/80'
                 }`}>
                   <div className="flex flex-col md:flex-row items-center justify-between gap-6">
                     <div className="flex items-center space-x-6">
                       <div className={`text-6xl ${
-                        (result.isEdited === true || 
-                         (result.editConfidence && result.editConfidence > 0.5) ||
-                         (result.forgeryScore && result.forgeryScore >= 40))
-                          ? 'text-red-400' : 'text-green-400'
+                        analysisState.hasEditSignals
+                          ? 'text-red-400'
+                          : analysisState.limited
+                            ? 'text-yellow-300'
+                            : 'text-green-400'
                       } animate-pulse`}>
-                        {(result.isEdited === true || 
-                          (result.editConfidence && result.editConfidence > 0.5) ||
-                          (result.forgeryScore && result.forgeryScore >= 40))
-                          ? '✂️' : '✅'}
+                        {analysisState.hasEditSignals
+                          ? '✂️'
+                          : analysisState.limited
+                            ? '⚠️'
+                            : '✅'}
                       </div>
                       <div>
                         <h4 className={`text-3xl font-bold font-mono mb-2 ${
-                          (result.isEdited === true || 
-                           (result.editConfidence && result.editConfidence > 0.5) ||
-                           (result.forgeryScore && result.forgeryScore >= 40))
-                            ? 'text-red-200' : 'text-green-200'
+                          analysisState.hasEditSignals
+                            ? 'text-red-200'
+                            : analysisState.limited
+                              ? 'text-yellow-200'
+                              : 'text-green-200'
                         }`}>
-                          {(result.isEdited === true || 
-                            (result.editConfidence && result.editConfidence > 0.5) ||
-                            (result.forgeryScore && result.forgeryScore >= 40))
-                            ? '[IMAGE_IS_EDITED]' : '[IMAGE_IS_ORIGINAL]'}
+                          {analysisState.hasEditSignals
+                            ? '[IMAGE_IS_EDITED]'
+                            : analysisState.limited
+                              ? '[AUTHENTICITY_UNAVAILABLE]'
+                              : '[IMAGE_IS_ORIGINAL]'}
                         </h4>
                         <p className={`text-base ${isDark ? 'text-slate-200' : 'text-gray-800'} font-mono`}>
-                          {(result.isEdited === true || 
-                            (result.editConfidence && result.editConfidence > 0.5) ||
-                            (result.forgeryScore && result.forgeryScore >= 40))
+                          {analysisState.hasEditSignals
                             ? '⚠️ This screenshot has been MODIFIED or EDITED. It may not be authentic.'
-                            : '✓ This screenshot appears to be ORIGINAL and UNEDITED. High authenticity.'}
+                            : analysisState.limited
+                              ? '⚠️ Authenticity engine could not run full edit detection. Please re-run after starting the ML service.'
+                              : '✓ This screenshot appears to be ORIGINAL and UNEDITED. High authenticity.'}
                         </p>
                       </div>
                     </div>
                     <div className="text-center md:text-right">
-                      <p className={`text-sm font-mono font-bold ${isDark ? 'text-slate-300' : 'text-gray-700'} mb-1`}>CONFIDENCE</p>
+                      <p className={`text-sm font-mono font-bold ${isDark ? 'text-slate-300' : 'text-gray-700'} mb-1`}>
+                        {analysisState.limited ? 'STATUS' : 'CONFIDENCE'}
+                      </p>
                       <p className={`text-4xl font-bold font-mono ${
-                        (result.isEdited === true || 
-                         (result.editConfidence && result.editConfidence > 0.5) ||
-                         (result.forgeryScore && result.forgeryScore >= 40))
-                          ? 'text-red-300' : 'text-green-300'
+                        analysisState.hasEditSignals
+                          ? 'text-red-300'
+                          : analysisState.limited
+                            ? 'text-yellow-300'
+                            : 'text-green-300'
                       }`}>
-                        {((result.editConfidence || 
-                           ((result.isEdited === true || 
-                             (result.editConfidence && result.editConfidence > 0.5) ||
-                             (result.forgeryScore && result.forgeryScore >= 40))
-                             ? 0.75 : 0.85)) * 100).toFixed(0)}%
+                        {analysisState.limited
+                          ? '--'
+                          : `${(
+                              (result.editConfidence ||
+                                (analysisState.hasEditSignals ? 0.75 : 0.85)) * 100
+                            ).toFixed(0)}%`}
                       </p>
                       <p className={`text-xs font-mono mt-1 ${isDark ? 'text-slate-400' : 'text-gray-600'}`}>
-                        {(result.isEdited === true || 
-                          (result.editConfidence && result.editConfidence > 0.5) ||
-                          (result.forgeryScore && result.forgeryScore >= 40))
-                          ? 'Edit Detection' : 'Originality Verified'}
+                        {analysisState.hasEditSignals
+                          ? 'Edit Detection'
+                          : analysisState.limited
+                            ? 'Limited Analysis'
+                            : 'Originality Verified'}
                       </p>
                     </div>
                   </div>
                   
-                  {((result.isEdited === true || 
-                     (result.editConfidence && result.editConfidence > 0.5) ||
-                     (result.forgeryScore && result.forgeryScore >= 40)) && 
+                  {(analysisState.hasEditSignals && 
                     result.editIndicators && result.editIndicators.length > 0) && (
                     <div className="mt-6 pt-6 border-t-2 border-red-500/60">
                       <p className={`text-base font-bold ${isDark ? 'text-red-200' : 'text-red-700'} mb-3 font-mono`}>
@@ -495,16 +625,43 @@ const EvidenceUpload = () => {
                     </div>
                   )}
                   
-                  {(!result.isEdited && result.editIndicators && result.editIndicators.length > 0) && (
-                    <div className="mt-6 pt-6 border-t-2 border-green-500/60">
-                      <p className={`text-base font-bold ${isDark ? 'text-green-200' : 'text-green-700'} mb-3 font-mono`}>
-                        [AUTHENTICITY_VERIFICATION]
+                  {(!analysisState.hasEditSignals && result.editIndicators && result.editIndicators.length > 0) && (
+                    <div className={`mt-6 pt-6 border-t-2 ${
+                      analysisState.limited ? 'border-yellow-500/60' : 'border-green-500/60'
+                    }`}>
+                      <p className={`text-base font-bold ${
+                        analysisState.limited
+                          ? isDark ? 'text-yellow-200' : 'text-yellow-700'
+                          : isDark ? 'text-green-200' : 'text-green-700'
+                      } mb-3 font-mono`}>
+                        {analysisState.limited ? '[AUTHENTICITY_WARNING]' : '[AUTHENTICITY_VERIFICATION]'}
                       </p>
                       <ul className="space-y-2">
                         {result.editIndicators.map((indicator, idx) => (
-                          <li key={idx} className={`flex items-start space-x-3 p-3 ${isDark ? 'bg-green-900/30' : 'bg-green-100'} rounded-lg border border-green-500/40`}>
-                            <span className={`text-lg font-mono ${isDark ? 'text-green-400' : 'text-green-600'}`}>✓</span>
-                            <span className={`font-mono text-sm ${isDark ? 'text-green-200' : 'text-green-800'}`}>{indicator}</span>
+                          <li
+                            key={idx}
+                            className={`flex items-start space-x-3 p-3 ${
+                              analysisState.limited
+                                ? isDark ? 'bg-yellow-900/30' : 'bg-yellow-100'
+                                : isDark ? 'bg-green-900/30' : 'bg-green-100'
+                            } rounded-lg border ${
+                              analysisState.limited ? 'border-yellow-500/40' : 'border-green-500/40'
+                            }`}
+                          >
+                            <span className={`text-lg font-mono ${
+                              analysisState.limited
+                                ? isDark ? 'text-yellow-300' : 'text-yellow-600'
+                                : isDark ? 'text-green-400' : 'text-green-600'
+                            }`}>
+                              {analysisState.limited ? '⚠️' : '✓'}
+                            </span>
+                            <span className={`font-mono text-sm ${
+                              analysisState.limited
+                                ? isDark ? 'text-yellow-100' : 'text-yellow-900'
+                                : isDark ? 'text-green-200' : 'text-green-800'
+                            }`}>
+                              {indicator}
+                            </span>
                           </li>
                         ))}
                       </ul>
@@ -549,35 +706,50 @@ const EvidenceUpload = () => {
               <div className={`${isDark ? 'bg-slate-900/50 border-slate-700' : 'bg-gray-50 border-gray-300'} p-6 rounded-lg border-2`}>
                 <h4 className="font-bold mb-4 font-mono text-cyan-400 text-lg">[IMAGE_FORENSICS]</h4>
                 <div className="space-y-3">
+                  {analysisState.limited && (
+                    <p className="font-mono text-xs text-yellow-400">
+                      Verdict and score are limited because the ML authenticity service was unavailable.
+                    </p>
+                  )}
                   <p className="font-mono text-sm">
                     <span className={isDark ? 'text-slate-400' : 'text-gray-600'}>Verdict:</span>{' '}
                     <span
                       className={`font-bold ${
-                        result.forgeryVerdict === 'tampered' || result.forgeryVerdict === 'TAMPERED'
-                          ? 'text-red-400'
-                          : result.forgeryVerdict === 'clean' || result.forgeryVerdict === 'CLEAN'
-                          ? 'text-green-400'
-                          : 'text-yellow-400'
+                        analysisState.limited
+                          ? 'text-yellow-400'
+                          : result.forgeryVerdict === 'tampered' || result.forgeryVerdict === 'TAMPERED'
+                            ? 'text-red-400'
+                            : result.forgeryVerdict === 'clean' || result.forgeryVerdict === 'CLEAN'
+                              ? 'text-green-400'
+                              : 'text-yellow-400'
                       }`}
                     >
-                      {result.forgeryVerdict?.toUpperCase() || 'UNKNOWN'}
+                      {analysisState.limited ? 'UNKNOWN' : (result.forgeryVerdict?.toUpperCase() || 'UNKNOWN')}
                     </span>
                   </p>
                   <p className="font-mono text-sm">
                     <span className={isDark ? 'text-slate-400' : 'text-gray-600'}>Forgery Score:</span>{' '}
                     <span className={`font-semibold ${
-                      result.forgeryScore >= 40 ? 'text-red-400' :
-                      result.forgeryScore >= 20 ? 'text-yellow-400' : 'text-green-400'
+                      analysisState.limited
+                        ? 'text-yellow-400'
+                        : result.forgeryScore >= 40
+                          ? 'text-red-400'
+                          : result.forgeryScore >= 20
+                            ? 'text-yellow-400'
+                            : 'text-green-400'
                     }`}>
-                      {result.forgeryScore || 0}/100
+                      {analysisState.limited ? '--' : `${result.forgeryScore || 0}/100`}
                     </span>
-                    {result.forgeryScore >= 40 && (
+                    {analysisState.limited && (
+                      <span className="ml-2 text-yellow-400 font-bold">⚠️ LIMITED_RESULT</span>
+                    )}
+                    {!analysisState.limited && result.forgeryScore >= 40 && (
                       <span className="ml-2 text-red-400 font-bold">⚠️ HIGH_RISK</span>
                     )}
                   </p>
                   {result.confidence && (
                     <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-600'} font-mono`}>
-                      <span>Confidence:</span> {(result.confidence * 100).toFixed(0)}%
+                      <span>Confidence:</span> {analysisState.limited ? '--' : `${(result.confidence * 100).toFixed(0)}%`}
                     </p>
                   )}
                 </div>

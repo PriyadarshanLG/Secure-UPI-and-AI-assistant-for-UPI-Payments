@@ -104,14 +104,34 @@ def validate_upi_id(upi_id: str) -> dict:
         risk_score += 40
         warnings.append('Sequential or repeated numbers detected')
     
-    # Common fraud keywords
-    fraud_keywords = ['test', 'fake', 'temp', 'dummy', 'admin', 'system']
-    if any(keyword in username.lower() for keyword in fraud_keywords):
-        risk_score += 50
-        warnings.append('Suspicious keywords in username')
+    # Common fraud keywords - Only flag if keyword is the ENTIRE username or clearly fake
+    # Don't flag if keyword is part of a longer legitimate username
+    fraud_keywords = ['test', 'fake', 'temp', 'dummy']
+    username_lower = username.lower()
     
-    # Determine validity
-    is_valid = risk_score < 50
+    # Only flag if:
+    # 1. Keyword is the entire username (e.g., "test@paytm")
+    # 2. Keyword is followed by only numbers (e.g., "test123@paytm" - suspicious)
+    # 3. Username starts with keyword and is very short (e.g., "test1@paytm")
+    for keyword in fraud_keywords:
+        if username_lower == keyword:
+            # Entire username is a fraud keyword
+            risk_score += 60
+            warnings.append(f'Suspicious username: "{keyword}" is a known test keyword')
+            break
+        elif username_lower.startswith(keyword) and len(username) <= len(keyword) + 3:
+            # Very short username starting with fraud keyword
+            risk_score += 50
+            warnings.append(f'Suspicious username pattern: "{keyword}" prefix with short username')
+            break
+        elif keyword in username_lower and len(username) <= 8:
+            # Short username containing fraud keyword
+            risk_score += 30
+            warnings.append(f'Possible test username: contains "{keyword}"')
+            break
+    
+    # Determine validity - More lenient threshold to reduce false positives
+    is_valid = risk_score < 60
     
     return {
         'valid': is_valid,
@@ -345,16 +365,31 @@ def comprehensive_transaction_validation(transaction_data: dict) -> dict:
     # Cap risk score
     results['overall_risk_score'] = min(results['overall_risk_score'], 100)
     
-    # Determine if fraud detected - LOWER THRESHOLD for better detection
-    results['fraud_detected'] = results['overall_risk_score'] >= 40 or not results['overall_valid']
+    # Determine if fraud detected - IMPROVED LOGIC
+    # Flag as fraud if:
+    # 1. Risk score is very high (>= 60)
+    # 2. OR multiple invalid fields with moderate risk (>= 50)
+    # 3. OR UPI ID is blacklisted/invalid (definitive fraud)
+    upi_invalid = False
+    if 'upi_id' in results['validations']:
+        upi_invalid = not results['validations']['upi_id'].get('valid', True) or results['validations']['upi_id'].get('risk_score', 0) >= 70
     
-    # Set verdict - More aggressive detection
+    results['fraud_detected'] = (
+        results['overall_risk_score'] >= 60 or 
+        (not results['overall_valid'] and results['overall_risk_score'] >= 50) or
+        upi_invalid
+    )
+    
+    # Set verdict - IMPROVED DETECTION LOGIC
     if results['fraud_detected']:
         results['verdict'] = 'FRAUD_DETECTED'
         results['recommendation'] = '🚨 BLOCK TRANSACTION - Fraud indicators detected!'
     elif results['overall_risk_score'] >= 30:
         results['verdict'] = 'SUSPICIOUS'
         results['recommendation'] = '⚠️ REQUIRE ADDITIONAL VERIFICATION - Suspicious patterns detected'
+    elif results['overall_risk_score'] >= 15:
+        results['verdict'] = 'REVIEW_REQUIRED'
+        results['recommendation'] = '⚠️ Review recommended - Some unusual patterns detected'
     else:
         results['verdict'] = 'LEGITIMATE'
         results['recommendation'] = '✅ Transaction appears legitimate'

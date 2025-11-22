@@ -10,7 +10,8 @@ import os
 # Use 'strict' for high-security environments
 # Use 'lenient' for reducing false positives
 
-REQUESTED_SENSITIVITY = os.getenv("FRAUD_DETECTION_SENSITIVITY", "balanced").lower()
+# Default to lenient to reduce false positives on real transactions
+REQUESTED_SENSITIVITY = os.getenv("FRAUD_DETECTION_SENSITIVITY", "lenient").lower()
 
 # ========== THRESHOLDS BY SENSITIVITY ==========
 
@@ -53,20 +54,20 @@ THRESHOLDS = {
     
     'lenient': {
         # Minimum false positives - Use when getting too many false alarms
-        'ela_edited_threshold': 25,  # Very high threshold
-        'ela_high_threshold': 35,
-        'frequency_variance_ratio': 8,  # Very high ratio
-        'noise_std_high': 40,
-        'noise_std_moderate': 25,
-        'sharp_edge_high': 0.12,
-        'sharp_edge_moderate': 0.08,
+        'ela_edited_threshold': 30,  # Very high threshold (increased from 25)
+        'ela_high_threshold': 40,  # Increased from 35
+        'frequency_variance_ratio': 10,  # Very high ratio (increased from 8)
+        'noise_std_high': 45,  # Increased from 40
+        'noise_std_moderate': 30,  # Increased from 25
+        'sharp_edge_high': 0.15,  # Increased from 0.12
+        'sharp_edge_moderate': 0.10,  # Increased from 0.08
         'low_variance_threshold': 8,
-        'edit_score_high': 90,
-        'edit_score_moderate': 60,
-        'edit_score_low': 35,
-        'forgery_clean_threshold': 20,
-        'forgery_suspicious_threshold': 50,
-        'missing_metadata_score': 5,  # Almost ignore missing metadata
+        'edit_score_high': 100,  # Increased from 90 - require very high score
+        'edit_score_moderate': 70,  # Increased from 60
+        'edit_score_low': 40,  # Increased from 35
+        'forgery_clean_threshold': 25,  # Increased from 20
+        'forgery_suspicious_threshold': 55,  # Increased from 50
+        'missing_metadata_score': 3,  # Almost ignore missing metadata (reduced from 5)
     }
 }
 
@@ -100,9 +101,9 @@ GENUINE_SCREENSHOT_INDICATORS = [
 
 # Weight adjustments for genuine screenshots
 GENUINE_SCREENSHOT_ADJUSTMENTS = {
-    'forgery_score_reduction': 25,  # Reduce forgery score by this much
-    'confidence_reduction': 0.15,  # Lower confidence in detection
-    'edit_score_reduction': 30,  # Reduce edit score by this much
+    'forgery_score_reduction': 35,  # Reduce forgery score by this much (increased from 25)
+    'confidence_reduction': 0.20,  # Lower confidence in detection (increased from 0.15)
+    'edit_score_reduction': 45,  # Reduce edit score by this much (increased from 30)
 }
 
 # ========== FRAUD DETECTION (Transaction Validation) ==========

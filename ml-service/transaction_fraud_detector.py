@@ -112,12 +112,29 @@ class TransactionFraudDetector:
             return score, indicators
         
         # Check for fake keywords (STRONG INDICATOR)
+        # Only flag if keyword is the ENTIRE username or clearly fake pattern
+        username_part = upi_id.split('@')[0].lower() if '@' in upi_id else upi_id.lower()
+        
         for keyword in self.fake_upi_keywords:
-            if keyword in upi_id:
-                score += 70  # Very high score for obvious fakes
-                indicators.append(f"Fake UPI ID detected: Contains '{keyword}'")
-                logger.warning(f"🚨 FAKE UPI ID: {upi_id} contains '{keyword}'")
-                return score, indicators  # Return immediately - this is definitive
+            # Only flag if:
+            # 1. Keyword is the entire username (e.g., "test@paytm")
+            # 2. Username is very short and contains keyword (e.g., "test1@paytm")
+            if username_part == keyword:
+                # Entire username is a fraud keyword - DEFINITIVE FAKE
+                score += 70
+                indicators.append(f"Fake UPI ID detected: Username is '{keyword}' (known test keyword)")
+                logger.warning(f"🚨 FAKE UPI ID: {upi_id} - username is fraud keyword '{keyword}'")
+                return score, indicators
+            elif username_part.startswith(keyword) and len(username_part) <= len(keyword) + 3:
+                # Very short username starting with fraud keyword
+                score += 50
+                indicators.append(f"Suspicious UPI ID: Username '{username_part}' starts with test keyword '{keyword}'")
+                break
+            elif keyword in username_part and len(username_part) <= 8:
+                # Short username containing fraud keyword - moderate suspicion
+                score += 25
+                indicators.append(f"Possible test UPI ID: Contains '{keyword}' in short username")
+                break
         
         # Check format (should be username@provider)
         if '@' not in upi_id:

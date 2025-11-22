@@ -94,19 +94,68 @@ if errorlevel 1 (
 )
 
 echo.
+echo Checking if port 8000 is already in use...
+netstat -ano | findstr :8000 >nul 2>&1
+if not errorlevel 1 (
+    echo Port 8000 is in use. Attempting to free it...
+    for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000') do (
+        echo Killing process %%a on port 8000...
+        taskkill /PID %%a /F >nul 2>&1
+    )
+    timeout /t 2 /nobreak >nul
+)
+
+echo.
 echo Starting ML Service on http://localhost:8000
-echo Press Ctrl+C to stop the service
+echo Service will start in the background...
 echo.
 
-%PYTHON_CMD% main.py
+REM Start service in background using start command
+start "Secure UPI ML Service" /MIN %PYTHON_CMD% main.py
 
-if errorlevel 1 (
+REM Wait a moment for service to initialize
+timeout /t 5 /nobreak >nul
+
+echo Waiting for ML service to be ready...
+set MAX_RETRIES=30
+set RETRY_COUNT=0
+set SERVICE_READY=0
+
+:check_health
+set /a RETRY_COUNT+=1
+if %RETRY_COUNT% gtr %MAX_RETRIES% (
     echo.
-    echo ERROR: ML Service failed to start
-    echo Check the error messages above
+    echo WARNING: Health check timeout, but service may still be running
+    echo Checking if service is responding...
+    powershell -Command "try { Invoke-WebRequest -Uri 'http://localhost:8000/health' -TimeoutSec 3 -UseBasicParsing | Out-Null; Write-Host 'Service is responding!' } catch { Write-Host 'Service not responding yet' }"
+    echo.
+    echo Please check the "Secure UPI ML Service" window for status
+    echo Service URL: http://localhost:8000
+    echo.
     pause
-    exit /b 1
+    exit /b 0
 )
+
+REM Check if service is responding using PowerShell
+powershell -Command "try { Invoke-WebRequest -Uri 'http://localhost:8000/health' -UseBasicParsing -TimeoutSec 3 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
+if errorlevel 1 (
+    echo Waiting for service... (%RETRY_COUNT%/%MAX_RETRIES%)
+    timeout /t 1 /nobreak >nul
+    goto check_health
+)
+
+echo.
+echo ========================================
+echo ML Service is READY and running!
+echo ========================================
+echo Service URL: http://localhost:8000
+echo Health Check: http://localhost:8000/health
+echo.
+echo The service is running in the background.
+echo To stop it, close the "Secure UPI ML Service" window or run:
+echo   taskkill /FI "WINDOWTITLE eq Secure UPI ML Service*" /F
+echo.
+pause
 
 
 

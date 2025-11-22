@@ -65,9 +65,20 @@ const LinkChecker = () => {
     }
   };
 
-  const getStatusColor = (status) => {
-    const statusUpper = status?.toUpperCase();
-    switch (statusUpper) {
+  // Determine effective status based on safety score: above 50% = safe
+  const getEffectiveStatus = (status, safetyScore) => {
+    // If safety score is above 50%, always show as safe
+    if (safetyScore && safetyScore > 50) {
+      return 'SAFE';
+    }
+    return status?.toUpperCase() || 'UNKNOWN';
+  };
+
+  const getStatusColor = (status, safetyScore) => {
+    // Use effective status (considers safety score)
+    const effectiveStatus = getEffectiveStatus(status, safetyScore);
+    
+    switch (effectiveStatus) {
       case 'SAFE':
         return {
           bg: 'bg-green-900/30',
@@ -108,9 +119,10 @@ const LinkChecker = () => {
     }
   };
 
-  const getStatusDisplay = (status) => {
-    const statusUpper = status?.toUpperCase();
-    return statusUpper === 'UNSAFE' ? 'UNSAFE' : statusUpper;
+  const getStatusDisplay = (status, safetyScore) => {
+    // Use effective status (considers safety score)
+    const effectiveStatus = getEffectiveStatus(status, safetyScore);
+    return effectiveStatus === 'UNSAFE' ? 'UNSAFE' : effectiveStatus;
   };
 
   /**
@@ -277,11 +289,11 @@ const LinkChecker = () => {
 
         {/* Results */}
         {result && (
-          <div className={`${isDark ? 'bg-slate-950/80' : 'bg-white'} backdrop-blur-xl border-2 ${getStatusColor(result.status).border} rounded-xl shadow-2xl ${getStatusColor(result.status).glow} overflow-hidden`}>
+          <div className={`${isDark ? 'bg-slate-950/80' : 'bg-white'} backdrop-blur-xl border-2 ${getStatusColor(result.status, result.safetyScore).border} rounded-xl shadow-2xl ${getStatusColor(result.status, result.safetyScore).glow} overflow-hidden`}>
             <div className={`${isDark ? 'bg-gradient-to-r from-slate-900 to-slate-800' : 'bg-gradient-to-r from-gray-100 to-gray-200'} border-b-2 border-cyan-500/60 px-6 py-4`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
-                  <div className={`p-3 rounded-lg bg-gradient-to-br ${result.status?.toLowerCase() === 'safe' ? 'from-green-500 to-emerald-600' : result.status?.toLowerCase() === 'suspicious' ? 'from-yellow-500 to-orange-600' : 'from-red-500 to-pink-600'} shadow-lg border-2 border-white/20`}>
+                  <div className={`p-3 rounded-lg bg-gradient-to-br ${getEffectiveStatus(result.status, result.safetyScore) === 'SAFE' ? 'from-green-500 to-emerald-600' : getEffectiveStatus(result.status, result.safetyScore) === 'SUSPICIOUS' ? 'from-yellow-500 to-orange-600' : 'from-red-500 to-pink-600'} shadow-lg border-2 border-white/20`}>
                     <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                     </svg>
@@ -293,12 +305,12 @@ const LinkChecker = () => {
                 </div>
                 
                 {/* Safety Score Badge - Prominent Display */}
-                <div className={`px-6 py-4 rounded-xl ${getStatusColor(result.status).badge} shadow-2xl border-2 border-white/30`}>
+                <div className={`px-6 py-4 rounded-xl ${getStatusColor(result.status, result.safetyScore).badge} shadow-2xl border-2 border-white/30`}>
                   <div className="text-center">
-                    <div className={`text-4xl font-black font-mono ${getStatusColor(result.status).icon}`}>
+                    <div className={`text-4xl font-black font-mono ${getStatusColor(result.status, result.safetyScore).icon}`}>
                       {result.safetyScore || 0}%
                     </div>
-                    <div className={`text-xs font-bold font-mono ${getStatusColor(result.status).icon} opacity-90 mt-1`}>
+                    <div className={`text-xs font-bold font-mono ${getStatusColor(result.status, result.safetyScore).icon} opacity-90 mt-1`}>
                       SAFETY
                     </div>
                   </div>
@@ -316,33 +328,33 @@ const LinkChecker = () => {
               {/* Status Badge with Color-Coded Button */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Status Display */}
-                <div className={`px-6 py-4 rounded-xl ${getStatusColor(result.status).badge} shadow-lg border-2 border-white/30 flex items-center justify-center`}>
+                <div className={`px-6 py-4 rounded-xl ${getStatusColor(result.status, result.safetyScore).badge} shadow-lg border-2 border-white/30 flex items-center justify-center`}>
                   <div className="text-center">
-                    <span className={`${getStatusColor(result.status).icon} font-mono text-2xl font-black uppercase tracking-wider`}>
-                      {getStatusDisplay(result.status)}
+                    <span className={`${getStatusColor(result.status, result.safetyScore).icon} font-mono text-2xl font-black uppercase tracking-wider`}>
+                      {getStatusDisplay(result.status, result.safetyScore)}
                     </span>
                   </div>
                 </div>
 
                 {/* Safety Score Details */}
-                <div className={`px-6 py-4 ${getStatusColor(result.status).bg} border-2 ${getStatusColor(result.status).border} rounded-xl backdrop-blur-xl`}>
+                <div className={`px-6 py-4 ${getStatusColor(result.status, result.safetyScore).bg} border-2 ${getStatusColor(result.status, result.safetyScore).border} rounded-xl backdrop-blur-xl`}>
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className={`text-xs ${getStatusColor(result.status).text} opacity-70 font-mono mb-1`}>SAFETY SCORE</p>
-                      <p className={`text-3xl font-bold font-mono ${getStatusColor(result.status).text}`}>
+                      <p className={`text-xs ${getStatusColor(result.status, result.safetyScore).text} opacity-70 font-mono mb-1`}>SAFETY SCORE</p>
+                      <p className={`text-3xl font-bold font-mono ${getStatusColor(result.status, result.safetyScore).text}`}>
                         {result.safetyScore || 0}<span className="text-xl">/100</span>
                       </p>
                     </div>
-                    {result.status?.toLowerCase() === 'safe' ? (
-                      <svg className={`w-12 h-12 ${getStatusColor(result.status).text}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    {getEffectiveStatus(result.status, result.safetyScore) === 'SAFE' ? (
+                      <svg className={`w-12 h-12 ${getStatusColor(result.status, result.safetyScore).text}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                    ) : result.status?.toLowerCase() === 'suspicious' ? (
-                      <svg className={`w-12 h-12 ${getStatusColor(result.status).text}`} fill="currentColor" viewBox="0 0 20 20">
+                    ) : getEffectiveStatus(result.status, result.safetyScore) === 'SUSPICIOUS' ? (
+                      <svg className={`w-12 h-12 ${getStatusColor(result.status, result.safetyScore).text}`} fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                       </svg>
                     ) : (
-                      <svg className={`w-12 h-12 ${getStatusColor(result.status).text}`} fill="currentColor" viewBox="0 0 20 20">
+                      <svg className={`w-12 h-12 ${getStatusColor(result.status, result.safetyScore).text}`} fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
                       </svg>
                     )}
@@ -406,7 +418,7 @@ const LinkChecker = () => {
               )}
 
               {/* Safe Message */}
-              {result.status?.toLowerCase() === 'safe' && (
+              {getEffectiveStatus(result.status, result.safetyScore) === 'SAFE' && (
                 <div className="p-6 bg-green-900/30 border-2 border-green-500/60 rounded-lg">
                   <div className="flex items-center space-x-3">
                     <svg className="w-12 h-12 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -423,18 +435,18 @@ const LinkChecker = () => {
               )}
 
               {/* Recommendation */}
-              <div className={`p-6 rounded-lg border-2 ${getStatusColor(result.status).border} ${getStatusColor(result.status).bg}`}>
-                <h4 className={`font-bold ${getStatusColor(result.status).text} font-mono mb-3 text-lg`}>[RECOMMENDATION]</h4>
+              <div className={`p-6 rounded-lg border-2 ${getStatusColor(result.status, result.safetyScore).border} ${getStatusColor(result.status, result.safetyScore).bg}`}>
+                <h4 className={`font-bold ${getStatusColor(result.status, result.safetyScore).text} font-mono mb-3 text-lg`}>[RECOMMENDATION]</h4>
                 <div className="space-y-2">
                   {result.recommendations && result.recommendations.length > 0 ? (
                     result.recommendations.map((rec, index) => (
-                      <p key={index} className={`${getStatusColor(result.status).text} font-mono text-sm leading-relaxed flex items-start space-x-2`}>
+                      <p key={index} className={`${getStatusColor(result.status, result.safetyScore).text} font-mono text-sm leading-relaxed flex items-start space-x-2`}>
                         <span className="mt-0.5">•</span>
                         <span>{rec}</span>
                       </p>
                     ))
                   ) : (
-                    <p className={`${getStatusColor(result.status).text} font-mono text-sm leading-relaxed`}>
+                    <p className={`${getStatusColor(result.status, result.safetyScore).text} font-mono text-sm leading-relaxed`}>
                       {result.recommendation || 'No specific recommendations available.'}
                     </p>
                   )}

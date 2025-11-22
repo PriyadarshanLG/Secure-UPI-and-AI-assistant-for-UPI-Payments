@@ -149,20 +149,23 @@ export const analyzeImage = async (filePathOrData) => {
       : error.response?.data?.detail || error.message || 'Unknown error';
     
     return {
+      // Flag the response so callers know the ML pipeline never ran.
       ocrText: `Limited verification: ${errorMessage}\nUsing safe fallback response.`,
-      forgeryScore: 5,
-      verdict: 'clean',
-      confidence: 0.9,
-      transactionValidation: { verdict: 'FALLBACK', notes: [errorMessage] },
+      forgeryScore: 0,
+      verdict: 'unknown',
+      confidence: 0.0,
+      transactionValidation: { verdict: 'UNVERIFIED', notes: [errorMessage] },
       fraudDetected: false,
-      fraudIndicators: ['ML service offline - fallback result'],
+      fraudIndicators: ['ML service offline - no forensics available'],
       extractedData: manualData || {},
-      isEdited: false,
-      editConfidence: 0.1,
+      isEdited: null,
+      editConfidence: 0.0,
       editIndicators: ['ML service unavailable - unable to run full edit detection'],
       error: errorMessage,
       mlServiceUrl: ML_SERVICE_URL,
       mlServiceEnabled: ML_SERVICE_ENABLED,
+      mlServiceAvailable: false,
+      analysisLimited: true,
     };
   }
 };

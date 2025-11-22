@@ -11,6 +11,29 @@ const router = express.Router();
 // All routes require authentication
 router.use(authenticate);
 
+// Well-known legitimate domains (always safe)
+const LEGITIMATE_DOMAINS = [
+  'google.com', 'google.co.in', 'google.co.uk', 'google.ca', 'google.com.au',
+  'youtube.com', 'facebook.com', 'twitter.com', 'instagram.com', 'linkedin.com',
+  'github.com', 'stackoverflow.com', 'reddit.com', 'wikipedia.org', 'amazon.com',
+  'amazon.in', 'microsoft.com', 'apple.com', 'netflix.com', 'spotify.com',
+  'paypal.com', 'stripe.com', 'visa.com', 'mastercard.com',
+  // Indian services
+  'flipkart.com', 'myntra.com', 'zomato.com', 'swiggy.com', 'ola.com', 'uber.com',
+  // News sites
+  'bbc.com', 'cnn.com', 'reuters.com', 'theguardian.com', 'timesofindia.indiatimes.com',
+  // Government
+  'gov.in', 'nic.in', 'india.gov.in',
+];
+
+// Check if domain is well-known legitimate
+const isLegitimateDomain = (hostname) => {
+  const domain = hostname.toLowerCase().replace(/^www\./, '');
+  return LEGITIMATE_DOMAINS.some(legit => 
+    domain === legit || domain.endsWith('.' + legit)
+  );
+};
+
 // Suspicious URL patterns (URL shorteners)
 const SUSPICIOUS_PATTERNS = [
   /bit\.ly/i,
@@ -287,8 +310,25 @@ router.post(
       const threats = [];
       let checkMethod = 'pattern_matching'; // Track which method was used
       
-      // If domain is not official (100% accurate check), mark as unsafe
-      if (!domainVerification.isOfficial && domainVerification.confidence >= 0.95) {
+      // Check if it's a well-known legitimate domain (do this first)
+      const isLegitimate = isLegitimateDomain(parsedUrl.hostname);
+      if (isLegitimate) {
+        // Well-known legitimate domain - set to maximum safety
+        safetyScore = 100;
+        isSafe = true;
+        // Skip most checks for legitimate domains - they're trusted
+      }
+      
+      // Boost confidence if domain is official (bank/UPI domain)
+      if (domainVerification.isOfficial) {
+        safetyScore = Math.min(100, safetyScore + 10); // Boost for official domains
+      }
+      
+      // Only mark as unsafe if domain verification detects typosquatting (high confidence fake)
+      // For general websites not in whitelist, don't penalize - they're just not bank/UPI domains
+      if (!domainVerification.isOfficial && domainVerification.confidence >= 0.95 && 
+          domainVerification.source === 'typosquatting_detection') {
+        // Only flag if it's a clear typosquatting attempt (confidence 1.0 from typosquatting detection)
         isSafe = false;
         safetyScore = Math.max(0, safetyScore - 50);
         threats.push({ 
@@ -298,15 +338,65 @@ router.post(
         });
       }
       
-      // If SSL is invalid (100% accurate check), mark as unsafe
-      if (!sslVerification.isValid && sslVerification.confidence >= 0.95) {
-        isSafe = false;
-        safetyScore = Math.max(0, safetyScore - 40);
-        threats.push({ 
-          type: 'INVALID_SSL', 
-          platform: 'ANY_PLATFORM',
-          details: sslVerification.details 
-        });
+      // SSL verification handling - be very lenient for legitimate sites
+      // IMPORTANT: For legitimate domains, always trust them regardless of SSL verification results
+      if (isLegitimate) {
+        // Legitimate domains are trusted - assume SSL is valid even if verification fails
+        // This prevents false positives for well-known safe sites like Google, Facebook, etc.
+        if (parsedUrl.protocol === 'https:') {
+          // HTTPS legitimate domain - assume valid SSL
+          if (safetyScore < 100) {
+            safetyScore = Math.min(100, safetyScore + 5);
+          }
+          if (!sslVerification.isValid) {
+            warnings.push('Could not verify SSL certificate (assumed valid for legitimate domain)');
+          }
+        }
+      } else if (sslVerification.isValid) {
+        // Valid SSL certificate - boost confidence
+        if (safetyScore < 100) {
+          safetyScore = Math.min(100, safetyScore + 5);
+        }
+      } else {
+        // SSL verification failed - check why (only for non-legitimate domains)
+        const sslDetails = sslVerification.details || {};
+        const isConnectionError = sslVerification.source === 'ssl_connection_error' || 
+                                  sslVerification.source === 'ssl_timeout' ||
+                                  sslVerification.source === 'error';
+        const isHTTPS = parsedUrl.protocol === 'https:';
+        
+        if (isHTTPS && isConnectionError) {
+          // HTTPS URL with connection error - assume valid, no penalty
+          // Just add a warning, don't reduce score
+          warnings.push('Could not verify SSL certificate (may be network-related)');
+        } else if (isConnectionError || sslVerification.confidence < 0.80) {
+          // Network issues or low confidence - minimal penalty
+          safetyScore = Math.max(0, safetyScore - 5);
+          warnings.push('Could not verify SSL certificate (may be network-related)');
+        } else if (sslVerification.confidence >= 0.95) {
+          // High confidence SSL issue - check if it's truly invalid
+          const isTrulyInvalid = !sslDetails.domainMatches || 
+                                 (sslDetails.daysUntilExpiry !== undefined && sslDetails.daysUntilExpiry <= 0);
+          
+          if (isTrulyInvalid) {
+            // Truly invalid SSL (expired or domain mismatch) - mark as unsafe
+            isSafe = false;
+            safetyScore = Math.max(0, safetyScore - 40);
+            threats.push({ 
+              type: 'INVALID_SSL', 
+              platform: 'ANY_PLATFORM',
+              details: sslVerification.details 
+            });
+          } else {
+            // Unknown issue but cert seems valid - small penalty
+            safetyScore = Math.max(0, safetyScore - 10);
+            warnings.push('SSL certificate validation issue detected');
+          }
+        } else {
+          // Medium confidence - just warning
+          safetyScore = Math.max(0, safetyScore - 5);
+          warnings.push('SSL certificate validation issue detected (may be network-related)');
+        }
       }
       
       // Check with Google Safe Browsing API (if available)
@@ -320,10 +410,15 @@ router.post(
       }
 
       // Reduce safety score based on pattern issues (reduced penalty)
-      if (patternIssues.length > 0) {
-        // Reduced from 15 to 8 points per issue to prevent false positives
-        safetyScore -= patternIssues.length * 8;
+      // Don't penalize legitimate domains for pattern issues
+      if (patternIssues.length > 0 && !isLegitimate) {
+        // Reduced from 15 to 5 points per issue to prevent false positives
+        // Only apply penalty if not a well-known legitimate domain
+        safetyScore -= Math.min(patternIssues.length * 5, 20); // Cap at 20 points
         warnings.push(...patternIssues);
+      } else if (patternIssues.length > 0 && isLegitimate) {
+        // For legitimate domains, just add warnings but don't reduce score
+        warnings.push(...patternIssues.map(issue => `Note: ${issue} (ignored for legitimate domain)`));
       }
 
       // Check Safe Browsing results
@@ -342,16 +437,21 @@ router.post(
         }
       } else {
         // If Safe Browsing not available, use pattern-based scoring
-        // More lenient threshold: only mark unsafe if score is very low (< 50)
-        if (safetyScore < 50) {
+        // Only mark unsafe if score is very low AND there are actual threats
+        // Don't mark as unsafe just because score is low - might be legitimate site
+        if (safetyScore < 30 && threats.length > 0) {
           isSafe = false;
+        }
+        // If SSL is valid, don't mark as unsafe even if score is moderate
+        if (sslVerification.isValid && safetyScore >= 50) {
+          isSafe = true; // Override unsafe flag if SSL is valid
         }
         if (safeBrowsingEnabled) {
           warnings.push('Google Safe Browsing check unavailable (API error), using pattern matching only');
         }
       }
 
-      // Additional heuristics
+      // Additional heuristics - only flag obvious malicious domains
       if (parsedUrl.hostname.includes('phishing') || 
           parsedUrl.hostname.includes('malware') ||
           parsedUrl.hostname.includes('virus')) {
@@ -360,21 +460,51 @@ router.post(
         threats.push({ type: 'SUSPICIOUS_DOMAIN', platform: 'ANY_PLATFORM' });
       }
 
-      // Ensure safety score is between 0 and 100
-      safetyScore = Math.max(0, Math.min(100, safetyScore));
+      // Ensure safety score is between 0 and 100, rounded to nearest integer
+      safetyScore = Math.round(Math.max(0, Math.min(100, safetyScore)));
 
-      // Determine status (more lenient thresholds)
-      let status = 'safe';
-      if (!isSafe || safetyScore < 40) {
-        status = 'unsafe';
-      } else if (safetyScore < 65) {
-        // Only mark as suspicious if score is genuinely low
-        status = 'suspicious';
-      } else if (warnings.length >= 3 && safetyScore < 80) {
-        // Multiple warnings with moderate score = suspicious
-        status = 'suspicious';
+      // Final safety check: If SSL is valid, don't mark as unsafe unless there are serious threats
+      if (sslVerification.isValid && threats.length === 0) {
+        // Valid SSL with no threats = definitely safe
+        isSafe = true;
+        if (safetyScore < 80) {
+          // Boost score for valid SSL
+          safetyScore = Math.min(100, safetyScore + 20);
+        }
       }
-      // If score >= 65 and less than 3 warnings, status remains 'safe'
+      
+      // For legitimate domains, always mark as safe
+      if (isLegitimate) {
+        isSafe = true;
+        safetyScore = Math.max(90, safetyScore); // Ensure at least 90% for legitimate domains
+      }
+
+      // Determine status - simplified logic: scores above 50% are safe/original
+      // IMPORTANT: Legitimate domains are ALWAYS safe, regardless of other checks
+      let status = 'safe';
+      
+      // Legitimate domains are always safe - this check must come first
+      if (isLegitimate) {
+        status = 'safe';
+        isSafe = true;
+        safetyScore = Math.max(90, safetyScore); // Ensure high score for legitimate domains
+      } else if (safetyScore > 50) {
+        // Scores above 50% are considered safe/original
+        status = 'safe';
+        isSafe = true;
+      } else if (safetyScore <= 50 && threats.length > 0) {
+        // Scores 50% or below with threats = unsafe
+        status = 'unsafe';
+        isSafe = false;
+      } else if (safetyScore <= 50 && threats.length === 0) {
+        // Scores 50% or below without threats = suspicious
+        status = 'suspicious';
+        isSafe = false;
+      } else {
+        // Default fallback
+        status = 'safe';
+        isSafe = true;
+      }
 
       // Audit log
       await createAuditLog({

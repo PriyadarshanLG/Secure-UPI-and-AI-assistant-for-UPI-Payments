@@ -71,24 +71,44 @@ def analyze_forgery_improved(image: Image.Image) -> Tuple[float, str, float, boo
     
     width, height = image.size
     
-    # ===== SCREENSHOT DETECTION (Genuine Detection) =====
+    # ===== SCREENSHOT DETECTION (Genuine Detection) - MORE LENIENT =====
     aspect_ratio = width / height if height > 0 else 1
     common_ratios = SCREENSHOT_FEATURES['common_aspect_ratios']
-    tolerance = SCREENSHOT_FEATURES['ratio_tolerance']
+    tolerance = SCREENSHOT_FEATURES['ratio_tolerance'] * 1.5  # More lenient tolerance
     
     def matches_ratio(ratio: float, tol: float = tolerance) -> bool:
         return abs(aspect_ratio - ratio) < tol or abs((1 / aspect_ratio) - ratio) < tol
     
     is_common_ratio = any(matches_ratio(r) for r in common_ratios)
-    has_mobile_resolution = (min(width, height) >= SCREENSHOT_FEATURES['min_mobile_width'] and 
-                            max(width, height) >= SCREENSHOT_FEATURES['min_mobile_height'])
-    divisible_by_10 = width % 10 == 0 and height % 10 == 0
-    is_typical_screenshot = is_common_ratio and has_mobile_resolution and divisible_by_10
+    # More lenient resolution check - many screenshots are smaller
+    has_mobile_resolution = (min(width, height) >= 400 and max(width, height) >= 800)  # Lowered from 600/1200
+    # Don't require divisible_by_10 - many screenshots don't meet this
+    # Just check if dimensions are reasonable for screenshots
+    reasonable_dimensions = width >= 300 and height >= 500
+    
+    # Screenshot if: common ratio OR (mobile resolution AND reasonable dimensions)
+    is_typical_screenshot = is_common_ratio or (has_mobile_resolution and reasonable_dimensions)
     
     # Track strong forgery indicators (score additions >= 25)
     strong_indicators: List[str] = []
     
     # ===== FORENSICS ANALYSIS =====
+    def filter_meaningful_indicators(indicators: List[str]) -> List[str]:
+        """
+        Remove benign indicator texts so we only react to true edit evidence.
+        """
+        benign_keywords = [
+            "no editing indicators",
+            "authentic screenshot",
+            "transaction screenshot detected",
+        ]
+        filtered = []
+        for text in indicators or []:
+            lower_text = text.lower()
+            if any(keyword in lower_text for keyword in benign_keywords):
+                continue
+            filtered.append(text)
+        return filtered
     
     # 1. METADATA ANALYSIS - Less aggressive
     try:
@@ -217,7 +237,7 @@ def analyze_forgery_improved(image: Image.Image) -> Tuple[float, str, float, boo
         confidence = max(0.05, confidence - 0.10)
     
     # If genuine screenshot with no strong indicators, mark as clean
-    authentic_screenshot = is_typical_screenshot and len(strong_indicators) <= 1
+    authentic_screenshot = is_typical_screenshot and len(strong_indicators) == 0
     if authentic_screenshot:
         reasons.append("Authentic native screenshot - no manipulation detected")
         forgery_score = min(forgery_score, 8)
@@ -266,7 +286,7 @@ def analyze_forgery_improved(image: Image.Image) -> Tuple[float, str, float, boo
         except Exception as e:
             logger.debug(f"ELA analysis error: {e}")
     
-    # Method 2: Frequency Domain Analysis - More forgiving
+    # Method 2: Frequency Domain Analysis - ALMOST IGNORE FOR SCREENSHOTS
     if len(img_array.shape) == 3:
         try:
             from numpy import fft
@@ -278,25 +298,50 @@ def analyze_forgery_improved(image: Image.Image) -> Tuple[float, str, float, boo
             freq_variance = np.var(magnitude_spectrum)
             freq_mean = np.mean(magnitude_spectrum)
             
-            # Use configurable threshold
-            if freq_variance > freq_mean * T['frequency_variance_ratio']:
-                is_edited = True
-                edit_score += 18
-                edit_confidence = max(edit_confidence, 0.62)
-                edit_indicators.append("Unnatural frequency domain patterns detected")
+            # Screenshots naturally contain lots of grid/UI elements, text, buttons, icons
+            # These create frequency patterns that are COMPLETELY NORMAL for screenshots
+            # We should ALMOST NEVER flag screenshots based on frequency patterns alone
+            freq_ratio_threshold = T['frequency_variance_ratio']
+            if is_typical_screenshot:
+                # For screenshots, frequency patterns are NORMAL - only flag EXTREME cases
+                # Use a VERY high threshold - essentially ignore frequency analysis for screenshots
+                freq_ratio_threshold *= 15.0  # HUGE multiplier - screenshots have natural UI patterns
+                # Only flag if variance is EXTREMELY EXTREMELY high (10x normal threshold)
+                # This should almost never trigger for real screenshots
+                extreme_threshold = freq_mean * freq_ratio_threshold * 3.0
+                if freq_variance > extreme_threshold:
+                    # Even then, use very low confidence and score
+                    is_edited = True
+                    edit_score += 5  # Very low score
+                    edit_confidence = max(edit_confidence, 0.40)  # Very low confidence
+                    edit_indicators.append("Extreme frequency patterns (rare - may be normal for complex UI)")
+                    logger.warning(f"Frequency pattern flagged for screenshot (variance={freq_variance:.1f}, threshold={extreme_threshold:.1f})")
+                else:
+                    # Normal screenshot frequency patterns - ignore completely
+                    logger.info(f"Screenshot frequency patterns are normal (variance={freq_variance:.1f}, mean={freq_mean:.1f}) - ignoring")
+            else:
+                # For non-screenshots, use normal threshold
+                if freq_variance > freq_mean * freq_ratio_threshold:
+                    is_edited = True
+                    edit_score += 18
+                    edit_confidence = max(edit_confidence, 0.62)
+                    edit_indicators.append("Unnatural frequency domain patterns detected")
         except Exception as e:
             logger.debug(f"Frequency analysis error: {e}")
     
-    # Method 3: High forgery score correlation
-    if forgery_score >= 50:
+    # Method 3: High forgery score correlation - MUCH higher thresholds for screenshots
+    high_forgery_threshold = 75 if is_typical_screenshot else 50  # Increased from 65
+    moderate_forgery_threshold = 55 if is_typical_screenshot else 35  # Increased from 45
+    
+    if forgery_score >= high_forgery_threshold:
         is_edited = True
-        edit_score += 30
-        edit_confidence = max(edit_confidence, 0.78)
+        edit_score += 20 if is_typical_screenshot else 30  # Reduced for screenshots
+        edit_confidence = max(edit_confidence, 0.75 if is_typical_screenshot else 0.78)
         edit_indicators.append("High forgery score indicates manipulation")
-    elif forgery_score >= 35:
+    elif forgery_score >= moderate_forgery_threshold:
         is_edited = True
-        edit_score += 15
-        edit_confidence = max(edit_confidence, 0.60)
+        edit_score += 8 if is_typical_screenshot else 15  # Reduced for screenshots
+        edit_confidence = max(edit_confidence, 0.55 if is_typical_screenshot else 0.60)
         edit_indicators.append("Moderate forgery indicators detected")
     
     # Final determination with configurable thresholds
@@ -316,14 +361,45 @@ def analyze_forgery_improved(image: Image.Image) -> Tuple[float, str, float, boo
         if not edit_indicators:
             edit_indicators.append("No editing indicators detected - Image appears original")
     
-    # Override for authentic screenshots
+    # Override for authentic screenshots - EXTREMELY AGGRESSIVE in recognizing genuine screenshots
     if authentic_screenshot:
-        forgery_score = min(forgery_score, 8)
-        confidence = min(confidence, 0.28)
-        is_edited = False
-        edit_score = 0.0
-        edit_confidence = 0.22
-        edit_indicators = ["Authentic screenshot - no editing detected"]
+        meaningful_edit_indicators = filter_meaningful_indicators(edit_indicators)
+        # Require EXTREMELY STRONG evidence of editing before flagging authentic screenshots
+        # For screenshots, we need MUCH MUCH higher edit scores to be confident it's edited
+        screenshot_edit_threshold = T['edit_score_high'] * 1.8  # 80% higher threshold for screenshots (was 1.3)
+        significant_edit_signal = (
+            edit_score >= screenshot_edit_threshold or  # Require very very high edit score
+            (edit_score >= T['edit_score_moderate'] * 1.5 and len(meaningful_edit_indicators) >= 5)  # Or high moderate + many strong indicators
+        )
+        
+        if not significant_edit_signal:
+            # Apply EXTREMELY generous reductions when only minor or no edit signals exist.
+            edit_score = max(
+                0,
+                edit_score - GENUINE_SCREENSHOT_ADJUSTMENTS.get('edit_score_reduction', 0) * 2.0  # 100% more reduction (was 1.5)
+            )
+            forgery_score = min(forgery_score, 3)  # Even lower cap (was 5)
+            confidence = min(confidence, 0.20)  # Even lower confidence (was 0.25)
+            is_edited = False
+            edit_confidence = 0.10  # Very very low confidence in edit detection (was 0.15)
+            edit_indicators = ["Authentic screenshot - no editing detected"]
+            logger.info("✅ Authentic screenshot detected - applying EXTREME authenticity boost")
+        else:
+            # Preserve detected edits but note why authenticity boost was blocked.
+            reasons.append("Screenshot authenticity boost skipped due to extremely strong edit signals")
+            edit_confidence = max(edit_confidence, 0.45)  # Lower confidence even when edits detected (was 0.50)
+            logger.warning("⚠️ Authentic screenshot but extremely strong edit signals detected")
+    
+    # Additional check: If it looks like a screenshot but wasn't caught above, still be lenient
+    if is_typical_screenshot and not authentic_screenshot:
+        # It's a screenshot but has some indicators - still be more lenient
+        if edit_score < T['edit_score_moderate']:
+            # Low edit score - treat as authentic
+            edit_score = max(0, edit_score - 20)  # Reduce edit score
+            if edit_score < 15:
+                is_edited = False
+                edit_confidence = max(0.15, edit_confidence - 0.2)
+                logger.info("✅ Screenshot with low edit indicators - treating as authentic")
     
     # CAP SCORES
     forgery_score = max(0, min(100, forgery_score))

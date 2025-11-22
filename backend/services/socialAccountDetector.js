@@ -5,6 +5,8 @@
  * a normalized score (0-100) and human-readable evidence.
  */
 
+import logger from '../utils/logger.js';
+
 const SIGNAL_WEIGHTS = {
   profile: 0.18,
   content: 0.15,
@@ -424,6 +426,68 @@ export const analyzeSocialAccount = (payload = {}) => {
   const riskScore = Math.round(clampScore(weightedScore));
   const riskLevel = riskScore >= 75 ? 'CRITICAL' : riskScore >= 55 ? 'HIGH' : riskScore >= 35 ? 'MEDIUM' : 'LOW';
 
+  // Check followers and following from network signals
+  const networkSignals = payload.networkSignals || {};
+  const followers = networkSignals.followers || 0;
+  const following = networkSignals.following || 0;
+
+  // Convert to numbers to ensure proper comparison
+  const followersNum = Number(followers) || 0;
+  const followingNum = Number(following) || 0;
+  
+  // Check profile metadata for profile photo
+  const profileMetadata = payload.profileMetadata || {};
+  const hasDefaultAvatar = profileMetadata.hasDefaultAvatar || false;
+  
+  // Log the values for debugging
+  logger.info('Verdict calculation (FAKE DETECTION LOGIC):', {
+    followers: followersNum,
+    following: followingNum,
+    hasDefaultAvatar: hasDefaultAvatar,
+  });
+
+  // FAKE DETECTION LOGIC (ONLY checks followers and following, NOT posts):
+  // - If no profile photo (hasDefaultAvatar = true) → FAKE
+  // - If followers < 20 → FAKE
+  // - If following < 20 → FAKE
+  // - Otherwise → REAL
+  // NOTE: Posts count is NOT used in fake detection
+  let isFake = false;
+  let fakeReason = '';
+  
+  if (hasDefaultAvatar) {
+    // No profile photo → FAKE
+    isFake = true;
+    fakeReason = 'No profile photo detected';
+    logger.warn('Account marked FAKE: No profile photo', { 
+      hasDefaultAvatar: hasDefaultAvatar 
+    });
+  } else if (followersNum < 20) {
+    // Followers less than 20 → FAKE
+    isFake = true;
+    fakeReason = `Followers less than 20 (${followersNum} detected)`;
+    logger.warn('Account marked FAKE: Followers < 20', { 
+      followers: followersNum 
+    });
+  } else if (followingNum < 20) {
+    // Following less than 20 → FAKE
+    isFake = true;
+    fakeReason = `Following less than 20 (${followingNum} detected)`;
+    logger.warn('Account marked FAKE: Following < 20', { 
+      following: followingNum 
+    });
+  } else {
+    // All checks passed → REAL (posts count is ignored)
+    isFake = false;
+    logger.info('Account marked REAL: Followers and following both >= 20', { 
+      followers: followersNum, 
+      following: followingNum,
+      hasDefaultAvatar: hasDefaultAvatar
+    });
+  }
+  
+  const accountVerdict = isFake ? 'FAKE' : 'REAL';
+
   const reasons = Object.values(breakdown)
     .flatMap((result) => result.evidence)
     .filter(Boolean);
@@ -439,12 +503,30 @@ export const analyzeSocialAccount = (payload = {}) => {
           ? 'Introduce friction (captcha, 2FA challenge)'
           : 'Monitor silently';
 
+  // Add fake reason to reasons list if account is fake due to zero stats
+  const finalReasons = [...prioritizedReasons];
+  if (isFake && fakeReason && !finalReasons.includes(fakeReason)) {
+    finalReasons.unshift(fakeReason); // Add at the beginning
+  }
+
+  // Get posts count for display (not used in verdict logic)
+  const contentFeatures = payload.contentFeatures || {};
+  const posts = contentFeatures.posts || 0;
+
   return {
     riskScore,
     riskLevel,
+    accountVerdict, // "REAL" or "FAKE"
+    isFake, // boolean for easy checking
+    fakeReason: isFake && fakeReason ? fakeReason : null, // Reason if fake due to zero stats
+    stats: {
+      followers,
+      following,
+      posts: posts, // For display only, not used in verdict
+    },
     recommendedAction,
     breakdown,
-    reasons: prioritizedReasons,
+    reasons: finalReasons.slice(0, 6), // Limit to 6 reasons
     metadata: {
       evaluatedAt: new Date().toISOString(),
       missingSignals: Object.keys(breakdown).filter((key) => !payload?.[signalKeyToPayloadField(key)]),
@@ -480,6 +562,12 @@ const signalKeyToPayloadField = (key) => {
 };
 
 const calculateConfidence = (payload = {}) => {
+  // If data quality score is provided, use it (from screenshot analysis)
+  if (payload.profileMetadata?._dataQualityScore !== undefined) {
+    return Math.min(1.0, Math.max(0.3, payload.profileMetadata._dataQualityScore));
+  }
+  
+  // Otherwise, calculate based on signal presence and data quality
   const populatedSignals = [
     'profileMetadata',
     'contentFeatures',
@@ -492,12 +580,28 @@ const calculateConfidence = (payload = {}) => {
     'externalIntel',
   ].filter((key) => Boolean(payload[key]));
 
-  return Number((populatedSignals.length / 9).toFixed(2));
+  let baseConfidence = populatedSignals.length / 9;
+  
+  // Adjust confidence based on data quality indicators
+  const profile = payload.profileMetadata || {};
+  if (profile.username && profile.username !== 'unknown') {
+    baseConfidence += 0.1; // Username detected
+  }
+  if (profile.accountAgeDays > 0) {
+    baseConfidence += 0.1; // Account age detected
+  }
+  if (payload.networkSignals?.followers > 0 || payload.networkSignals?.following > 0) {
+    baseConfidence += 0.1; // Network stats detected
+  }
+  
+  return Number(Math.min(1.0, Math.max(0.3, baseConfidence)).toFixed(2));
 };
 
 export default {
   analyzeSocialAccount,
 };
+
+
 
 
 

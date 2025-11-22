@@ -37,10 +37,34 @@ router.post(
     try {
       const { transactionId, manualData, manualOnly } = req.body;
       
+      logger.info('Upload request received:', {
+        hasFile: !!req.file,
+        fileInfo: req.file ? { name: req.file.originalname, size: req.file.size, mimetype: req.file.mimetype } : null,
+        transactionId: transactionId,
+        manualData: manualData ? (typeof manualData === 'string' ? manualData.substring(0, 100) : manualData) : null,
+        manualOnly: manualOnly,
+        bodyKeys: Object.keys(req.body || {})
+      });
+      
       // Check if this is manual-only mode (no file upload)
-      if (manualOnly === 'true') {
+      // manualData comes as a string from FormData, need to check if it's valid
+      let hasValidManualData = false;
+      if (manualData) {
+        if (typeof manualData === 'string') {
+          hasValidManualData = manualData !== 'undefined' && 
+                              manualData !== 'null' && 
+                              manualData.trim() !== '' &&
+                              manualData.trim() !== '{}';
+        } else {
+          hasValidManualData = true; // Already parsed object
+        }
+      }
+      
+      const isManualOnly = manualOnly === 'true' || (!req.file && hasValidManualData);
+      
+      if (isManualOnly) {
         // Manual-only mode: validate transaction data without image
-        if (!manualData) {
+        if (!hasValidManualData) {
           logger.warn('Manual-only mode but no manual data provided');
           return res.status(400).json({ 
             error: 'Please provide transaction details (UPI ID, Amount, or Reference ID)' 
@@ -52,8 +76,25 @@ router.post(
         let parsedManualData = null;
         try {
           parsedManualData = JSON.parse(manualData);
+          
+          // Validate that at least one field is provided
+          if (!parsedManualData || typeof parsedManualData !== 'object') {
+            return res.status(400).json({ error: 'Invalid transaction data format' });
+          }
+          
+          const hasAnyData = parsedManualData.upiId || parsedManualData.amount || 
+                            parsedManualData.referenceId || parsedManualData.merchantName;
+          
+          if (!hasAnyData) {
+            return res.status(400).json({ 
+              error: 'Please provide at least one transaction detail (UPI ID, Amount, or Reference ID)' 
+            });
+          }
         } catch (e) {
-          return res.status(400).json({ error: 'Invalid transaction data format' });
+          logger.error('Failed to parse manual data:', e);
+          return res.status(400).json({ 
+            error: 'Invalid transaction data format. Please check your input.' 
+          });
         }
         
         // Validate transaction data using ML service
@@ -63,25 +104,41 @@ router.post(
           manualOnly: true
         });
         
+        // Map ML service verdict to Evidence model enum values
+        let manualVerdict = 'unknown';
+        if (analysis.verdict) {
+          const verdictLower = analysis.verdict.toLowerCase();
+          if (verdictLower === 'clean') {
+            manualVerdict = 'clean';
+          } else if (verdictLower === 'tampered' || verdictLower === 'suspicious') {
+            manualVerdict = 'tampered';
+          } else {
+            manualVerdict = 'unknown';
+          }
+        }
+        
         // Create a simple evidence record for manual validation
         const evidence = new Evidence({
           transactionId: transactionId || null,
           uploaderId: req.user._id,
-          fileName: 'Manual Validation',
-          fileSize: 0,
-          mimeType: 'manual/validation',
           filePath: 'manual-only',
           hash: 'manual-' + Date.now(),
           ocrText: analysis.ocrText || 'Manual validation - no OCR',
           forgeryScore: analysis.forgeryScore || 0,
-          forgeryVerdict: analysis.verdict || 'manual',
+          forgeryVerdict: manualVerdict,
           confidence: analysis.confidence || 1.0,
           metadata: {
+            fileName: 'Manual Validation',
+            fileSize: 0,
+            mimeType: 'manual/validation',
             transactionValidation: analysis.transactionValidation || {},
             extractedData: analysis.extractedData || {},
             fraudDetected: analysis.fraudDetected || false,
             fraudIndicators: analysis.fraudIndicators || [],
-            manualOnly: true
+            manualOnly: true,
+            analysisLimited: analysis.analysisLimited || false,
+            mlServiceAvailable: analysis.mlServiceAvailable !== false,
+            mlFallbackError: analysis.error || null,
           },
         });
 
@@ -106,21 +163,33 @@ router.post(
             extractedData: analysis.extractedData || {},
             fraudDetected: analysis.fraudDetected || false,
             fraudIndicators: analysis.fraudIndicators || [],
-            manualOnly: true
+            manualOnly: true,
+            analysisLimited: analysis.analysisLimited || false,
+            mlServiceAvailable: analysis.mlServiceAvailable !== false,
+            mlFallbackError: analysis.error || null,
           },
         });
       }
 
-      // File upload mode - file is required
-      if (!req.file) {
-        logger.warn('File upload mode but no file provided');
+      // File upload mode - file is required (only if not manual-only)
+      if (!req.file && !isManualOnly) {
+        logger.warn('File upload mode but no file provided and no valid manual data');
         return res.status(400).json({ 
           error: 'No file uploaded',
-          details: ['Please select an image file to upload']
+          details: ['Please select an image file to upload, or provide transaction details manually']
         });
       }
 
-      logger.info(`File uploaded successfully: ${req.file.filename}, mimetype: ${req.file.mimetype}, size: ${req.file.size} bytes`);
+      // If we have a file, proceed with file upload mode
+      if (req.file) {
+        logger.info(`File uploaded successfully: ${req.file.filename}, mimetype: ${req.file.mimetype}, size: ${req.file.size} bytes`);
+        
+        // Validate file
+        if (!req.file.path) {
+          logger.error('File uploaded but path is missing');
+          return res.status(400).json({ error: 'File upload failed - file path not available' });
+        }
+      }
       
       // Parse manual data if provided (optional for file uploads)
       let parsedManualData = null;
@@ -134,8 +203,24 @@ router.post(
         }
       }
 
-      // Calculate file hash
-      const hash = await calculateFileHash(req.file.path);
+      // Calculate file hash (only if file exists)
+      if (!req.file || !req.file.path) {
+        logger.error('File upload mode but no file available', { file: req.file });
+        return res.status(400).json({ 
+          error: 'File upload failed - no file received' 
+        });
+      }
+      
+      let hash;
+      try {
+        hash = await calculateFileHash(req.file.path);
+        logger.info(`File hash calculated: ${hash.substring(0, 16)}...`);
+      } catch (hashError) {
+        logger.error('Failed to calculate file hash:', hashError);
+        return res.status(400).json({ 
+          error: 'File processing failed - could not calculate file hash' 
+        });
+      }
 
       // ALWAYS RE-ANALYZE - Don't use cached results (for accurate fraud detection)
       // This ensures every upload gets fresh analysis with latest detection algorithms
@@ -156,24 +241,72 @@ router.post(
       
       // Pass manual data to ML service if provided
       let analysisData = req.file.path;
-      if (parsedManualData) {
+      if (parsedManualData && Object.keys(parsedManualData).length > 0) {
         analysisData = {
           filePath: req.file.path,
           manualData: parsedManualData
         };
+        logger.info('Including manual data in analysis:', parsedManualData);
       }
       
-      const analysis = await analyzeImage(analysisData);
+      let analysis;
+      try {
+        analysis = await analyzeImage(analysisData);
+        logger.info('Image analysis completed:', {
+          verdict: analysis.verdict,
+          forgeryScore: analysis.forgeryScore,
+          fraudDetected: analysis.fraudDetected
+        });
+      } catch (analysisError) {
+        logger.error('Image analysis failed:', analysisError);
+        return res.status(500).json({ 
+          error: 'Image analysis failed. Please try again or contact support.',
+          details: analysisError.message 
+        });
+      }
 
+      // Validate required fields before creating evidence
+      if (!req.user || !req.user._id) {
+        logger.error('User authentication missing');
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+      
+      if (!req.file || !req.file.path) {
+        logger.error('File path missing');
+        return res.status(400).json({ error: 'File path is required' });
+      }
+      
+      if (!hash) {
+        logger.error('File hash missing');
+        return res.status(400).json({ error: 'File hash calculation failed' });
+      }
+      
+      // Map ML service verdict to Evidence model enum values
+      // Evidence model only allows: 'clean', 'tampered', 'unknown'
+      // ML service may return: 'clean', 'tampered', 'suspicious', 'unknown'
+      let forgeryVerdict = 'unknown';
+      if (analysis.verdict) {
+        const verdictLower = analysis.verdict.toLowerCase();
+        if (verdictLower === 'clean') {
+          forgeryVerdict = 'clean';
+        } else if (verdictLower === 'tampered' || verdictLower === 'suspicious') {
+          // Map 'suspicious' to 'tampered' since it indicates potential manipulation
+          forgeryVerdict = 'tampered';
+        } else {
+          forgeryVerdict = 'unknown';
+        }
+      }
+      
       // Create evidence record with ALL fraud detection data
-      const evidence = new Evidence({
+      // Ensure all required fields are present
+      const evidenceData = {
         transactionId: transactionId || null,
         uploaderId: req.user._id,
         filePath: req.file.path,
-        hash,
-        ocrText: analysis.ocrText,
-        forgeryVerdict: analysis.verdict,
-        forgeryScore: analysis.forgeryScore,
+        hash: hash,
+        ocrText: analysis.ocrText || '',
+        forgeryVerdict: forgeryVerdict,
+        forgeryScore: analysis.forgeryScore || 0,
         metadata: {
           fileName: req.file.originalname,
           fileSize: req.file.size,
@@ -188,10 +321,41 @@ router.post(
           isEdited: analysis.isEdited !== undefined ? analysis.isEdited : false,
           editConfidence: analysis.editConfidence !== undefined ? analysis.editConfidence : 0.0,
           editIndicators: analysis.editIndicators || [],
+          analysisLimited: analysis.analysisLimited || false,
+          mlServiceAvailable: analysis.mlServiceAvailable !== false,
+          mlFallbackError: analysis.error || null,
         },
-      });
+      };
+      
+      // Validate required fields one more time
+      if (!evidenceData.uploaderId) {
+        return res.status(400).json({ error: 'Uploader ID is required' });
+      }
+      if (!evidenceData.filePath) {
+        return res.status(400).json({ error: 'File path is required' });
+      }
+      if (!evidenceData.hash) {
+        return res.status(400).json({ error: 'File hash is required' });
+      }
+      
+      logger.info('Creating evidence record...');
+      const evidence = new Evidence(evidenceData);
 
-      await evidence.save();
+      // Save evidence with error handling
+      try {
+        await evidence.save();
+        logger.info('Evidence saved successfully:', evidence._id);
+      } catch (saveError) {
+        logger.error('Failed to save evidence:', saveError);
+        if (saveError.name === 'ValidationError') {
+          const validationErrors = Object.values(saveError.errors || {}).map(e => e.message).join(', ');
+          return res.status(400).json({ 
+            error: `Failed to save evidence: ${validationErrors || saveError.message}`,
+            details: saveError.message 
+          });
+        }
+        throw saveError; // Re-throw to be caught by outer catch
+      }
 
       // Audit log
       await createAuditLog({
@@ -228,9 +392,39 @@ router.post(
           isEdited: analysis.isEdited !== undefined ? analysis.isEdited : (evidence.metadata?.isEdited || false),
           editConfidence: analysis.editConfidence !== undefined ? analysis.editConfidence : (evidence.metadata?.editConfidence || 0.0),
           editIndicators: analysis.editIndicators || evidence.metadata?.editIndicators || [],
+          analysisLimited: analysis.analysisLimited || evidence.metadata?.analysisLimited || false,
+          mlServiceAvailable: analysis.mlServiceAvailable !== false,
+          mlFallbackError: analysis.error || evidence.metadata?.mlFallbackError || null,
         },
       });
     } catch (error) {
+      logger.error('Evidence upload error:', {
+        error: error.message,
+        stack: error.stack,
+        hasFile: !!req.file,
+        body: req.body
+      });
+      
+      // Return user-friendly error message
+      if (error.name === 'ValidationError') {
+        logger.error('Mongoose validation error:', error.errors);
+        const validationErrors = Object.values(error.errors || {}).map(e => e.message).join(', ');
+        return res.status(400).json({ 
+          error: `Validation failed: ${validationErrors || error.message}`,
+          details: error.message 
+        });
+      }
+      
+      // Handle Mongoose cast errors
+      if (error.name === 'CastError') {
+        logger.error('Mongoose cast error:', error);
+        return res.status(400).json({ 
+          error: `Invalid data format: ${error.message}`,
+          details: error.path 
+        });
+      }
+      
+      // Pass to error handler middleware
       next(error);
     }
   }
